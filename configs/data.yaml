@@ -1,0 +1,46 @@
+seed: 42
+raw_dir: data/raw
+interim_dir: data/interim
+processed_dir: data/processed
+manifest_dir: data/manifests
+max_tool_output_chars: 12000
+min_quality_score: 0.20
+require_known_license: false
+split:
+  train: 0.90
+  validation: 0.05
+  test: 0.05
+deduplication:
+  minhash_threshold: 0.90
+  num_perm: 128
+sources:
+  - name: greghavens/fable-5-coding-and-debugging-traces
+    alias: greghavens
+    revision: main
+    weight: 0.65
+    license: unknown
+    enabled: true
+  - name: Glint-Research/Fable-5-traces
+    alias: glint
+    revision: main
+    weight: 0.20
+    license: unknown
+    enabled: true
+    optional: true
+  # Defina uma fonte geral pequena e auditada antes do treino principal.
+  - name: bigcode/self-oss-instruct-sc2-exec-filter-50k
+    alias: general_code
+    revision: main
+    weight: 0.15
+    license: odc-by
+    max_rows: 20000
+    enabled: true
+sampling:
+  example_types:
+    next_action: 0.50
+    trajectory: 0.35
+    final_answer: 0.15
+  reasoning_modes:
+    long: 0.30
+    compressed: 0.50
+    hidden: 0.20

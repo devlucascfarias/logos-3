@@ -1,0 +1,28 @@
+model:
+  name: Qwen/Qwen3-8B-Base
+  revision: main
+  adapter_path: outputs/adapters/stage2
+  load_in_4bit: true
+  quant_type: nf4
+  double_quant: true
+  compute_dtype: bfloat16
+  attn_implementation: sdpa
+data:
+  train_file: data/processed/preferences_train.jsonl
+  validation_file: data/processed/preferences_validation.jsonl
+training:
+  output_dir: outputs/checkpoints/preference
+  max_length: 4096
+  max_prompt_length: 3072
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16
+  learning_rate: 5.0e-6
+  num_train_epochs: 1.0
+  beta: 0.1
+  optim: paged_adamw_8bit
+  bf16: true
+  gradient_checkpointing: true
+  save_steps: 50
+  logging_steps: 5
+  seed: 42
+

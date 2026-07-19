@@ -1,0 +1,20 @@
+model:
+  base: Qwen/Qwen3-8B-Base
+  adapters:
+    - outputs/adapters/stage1
+    - outputs/adapters/stage2
+data:
+  static_file: data/processed/test.jsonl
+  agent_tasks: data/processed/agent_tasks.jsonl
+generation:
+  max_new_tokens: 512
+  do_sample: false
+  temperature: 0.0
+  seed: 42
+harness:
+  max_steps: 20
+  command_timeout_seconds: 30
+  max_output_bytes: 12000
+  allow_network: false
+output_dir: outputs/evaluations
+
