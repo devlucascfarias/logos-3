@@ -47,25 +47,35 @@ Colab. Instale Flash Attention separadamente apenas se a imagem CUDA suportar.
 
 ## Execução no Colab
 
-Abra os notebooks em ordem:
+Abra somente:
 
-1. `notebooks/00_environment_check.ipynb`
-2. `notebooks/01_download_and_audit.ipynb`
-3. `notebooks/02_preprocess.ipynb`
-4. `notebooks/03_train_qlora.ipynb`
-5. `notebooks/04_merge_and_export.ipynb`
-6. `notebooks/05_evaluate.ipynb`
+```text
+notebooks/fable_qwen3_8b_colab_l4.ipynb
+```
 
-O notebook 00 clona `https://github.com/devlucascfarias/logos-3.git` em
+Execute as células de cima para baixo. O notebook único contém ambiente,
+clone/pull do repositório, autenticação no Hugging Face, download, auditoria,
+preprocessing, testes, Stage 1, avaliação, Stage 2 opcional e exportação.
+
+Na primeira célula de controles, mantenha `SMOKE_TEST=True` para validar a
+pipeline com 750 exemplos e 100 steps. Depois, altere para `False` para executar
+o treinamento principal. Stage 2, comparação completa e exportação permanecem
+desativados até serem explicitamente habilitados.
+
+O notebook clona `https://github.com/devlucascfarias/logos-3.git` em
 `/content/logos-3`. Se já houver um clone limpo, executa
-`git pull --ff-only origin main`. Os demais notebooks usam esse mesmo diretório.
+`git pull --ff-only origin main`.
+
+Como o repositório é privado, adicione também um secret `GH_TOKEN` no Colab com
+permissão de leitura do repositório. A célula usa o token por um header de
+ambiente do Git, sem inseri-lo na URL, nos logs ou no traceback.
 
 Por padrão, artefatos persistentes ficam em
-`/content/drive/MyDrive/fable-qwen-distillation`. Os notebooks são interfaces
-finas para os mesmos scripts CLI usados localmente.
+`/content/drive/MyDrive/fable-qwen-distillation`. O notebook é uma interface
+fina para os mesmos scripts CLI usados localmente.
 
-Antes do notebook 01, crie um secret chamado `HF_TOKEN` no painel **Secrets** do
-Colab e habilite seu acesso ao notebook. A célula autentica com
+Antes da seção de download, crie um secret chamado `HF_TOKEN` no painel
+**Secrets** do Colab e habilite seu acesso ao notebook. A célula autentica com
 `huggingface_hub.login`, repassa o token ao subprocesso de download e nunca o
 imprime ou inclui nos manifests.
 
