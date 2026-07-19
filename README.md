@@ -1,7 +1,9 @@
 # Fable → Qwen3-8B Distillation
 
-Pipeline reprodutível para pós-treinamento do `Qwen/Qwen3-8B-Base` como agente de
-engenharia de software. O projeto foi desenhado para Google Colab Pro com uma
+Pipeline reprodutível para especialização do `Qwen/Qwen3-8B` pós-treinado como
+agente de engenharia de software. O checkpoint preserva os modos nativos
+thinking/non-thinking e recebe QLoRA sobre traces agentic verificáveis. O
+projeto foi desenhado para Google Colab Pro com uma
 NVIDIA L4 de 24 GB: QLoRA NF4, BF16, SDPA, batch por dispositivo igual a 1,
 gradient checkpointing e retomada automática.
 
@@ -138,6 +140,13 @@ O split é feito por grupos e validado contra interseções de:
 A normalização reduz as ferramentas a `list_files`, `read_file`, `write_file`,
 `apply_patch`, `search` e `shell`. Outputs longos usam truncamento head-tail.
 
+O treino e a geração usam `tokenizer.apply_chat_template`, mantendo o protocolo
+oficial do Qwen3. Exemplos `long` e `compressed` usam thinking mode com
+`<think>...</think>`; exemplos `hidden` usam o prefixo non-thinking oficial. A
+mistura `30/50/20` de `configs/data.yaml` é aplicada deterministicamente por
+sessão e turno. Quando a fonte não contém raciocínio explícito, o exemplo é
+tratado como non-thinking em vez de fabricar um CoT.
+
 ## Treino e retomada
 
 `scripts/train_sft.py` carrega o modelo em NF4, prepara LoRA nos módulos de
@@ -145,9 +154,14 @@ atenção e MLP, aplica um collator com labels `-100` fora do conteúdo do
 assistente, registra um `run_manifest.json` e procura o checkpoint válido mais
 recente quando recebe `--resume-from-checkpoint auto`.
 
-O Stage 1 usa contexto 4096 e LoRA rank 32. O Stage 2 retoma o adapter com
-contexto 8192 e learning rate menor. Não execute os dois estágios
+O Stage 1 usa contexto 4096, LoRA rank 32 e learning rate `5e-5`. O Stage 2
+retoma o adapter com contexto 8192 e learning rate `2e-5`. Não execute os dois estágios
 simultaneamente nem carregue uma segunda cópia do modelo-base na L4.
+
+A avaliação escolhe os parâmetros recomendados por modo: thinking usa
+`temperature=0.6`, `top_p=0.95` e `top_k=20`; non-thinking usa
+`temperature=0.7`, `top_p=0.8` e `top_k=20`. Greedy decoding não é usado para
+thinking mode.
 
 ## Preferência e harness
 

@@ -36,7 +36,13 @@ def main() -> None:
     model_cfg, data_cfg, train_cfg = config["model"], config["data"], config["training"]
     seed = int(train_cfg.get("seed", 42))
     set_global_seed(seed)
-    tokenizer = AutoTokenizer.from_pretrained(model_cfg["name"], trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_cfg["name"],
+        trust_remote_code=True,
+        use_fast=True,
+    )
+    if not getattr(tokenizer, "chat_template", None):
+        raise SystemExit("The selected tokenizer does not provide an official chat template")
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
     quantization = BitsAndBytesConfig(
@@ -118,4 +124,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

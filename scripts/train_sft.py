@@ -89,7 +89,12 @@ def main() -> None:
         model_config["name"],
         revision=model_revision,
         trust_remote_code=bool(model_config.get("trust_remote_code", True)),
+        use_fast=True,
     )
+    if not getattr(tokenizer, "is_fast", False):
+        raise SystemExit("Assistant-only masking requires the Qwen3 fast tokenizer")
+    if not getattr(tokenizer, "chat_template", None):
+        raise SystemExit("The selected tokenizer does not provide an official chat template")
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(

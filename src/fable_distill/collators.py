@@ -26,6 +26,7 @@ class AssistantOnlyDataCollator:
                 feature["messages"],
                 max_length=self.max_length,
                 assistant_target_indices=feature.get("assistant_target_indices"),
+                reasoning_mode=str(feature.get("reasoning_mode", "compressed")),
             )
             for feature in features
         ]

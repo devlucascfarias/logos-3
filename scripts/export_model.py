@@ -10,7 +10,7 @@ import _bootstrap  # noqa: F401
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export an adapter or optionally merge it on CPU")
-    parser.add_argument("--base-model", default="Qwen/Qwen3-8B-Base")
+    parser.add_argument("--base-model", default="Qwen/Qwen3-8B")
     parser.add_argument("--adapter", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--merge", action="store_true")
@@ -66,4 +66,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

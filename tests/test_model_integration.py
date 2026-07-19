@@ -18,7 +18,7 @@ def test_quantized_forward_and_short_generation() -> None:
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
     assert torch.cuda.is_available()
-    name = "Qwen/Qwen3-8B-Base"
+    name = "Qwen/Qwen3-8B"
     tokenizer = AutoTokenizer.from_pretrained(name, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
         name,
@@ -32,7 +32,17 @@ def test_quantized_forward_and_short_generation() -> None:
         attn_implementation="sdpa",
         trust_remote_code=True,
     )
-    encoded = tokenizer("Return one valid shell tool call.", return_tensors="pt").to(model.device)
+    prompt = tokenizer.apply_chat_template(
+        [{"role": "user", "content": "Return one valid shell tool call."}],
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=False,
+    )
+    encoded = tokenizer(
+        prompt,
+        return_tensors="pt",
+        add_special_tokens=False,
+    ).to(model.device)
     with torch.inference_mode():
         generated = model.generate(**encoded, max_new_tokens=8)
     assert generated.shape[1] > encoded["input_ids"].shape[1]
@@ -46,4 +56,3 @@ def test_adapter_can_be_reloaded_when_provided() -> None:
 
     config = PeftConfig.from_pretrained(Path(adapter_path))
     assert config.base_model_name_or_path
-

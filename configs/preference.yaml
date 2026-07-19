@@ -1,5 +1,5 @@
 model:
-  name: Qwen/Qwen3-8B-Base
+  name: Qwen/Qwen3-8B
   revision: main
   adapter_path: outputs/adapters/stage2
   load_in_4bit: true
@@ -25,4 +25,3 @@ training:
   save_steps: 50
   logging_steps: 5
   seed: 42
-

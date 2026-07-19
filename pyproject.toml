@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fable-qwen-distillation"
 version = "0.1.0"
-description = "Reproducible Fable coding-agent distillation pipeline for Qwen3-8B Base"
+description = "Reproducible Fable coding-agent specialization pipeline for Qwen3-8B"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 license = {text = "Apache-2.0"}

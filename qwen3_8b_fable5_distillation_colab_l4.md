@@ -1,8 +1,10 @@
-# Plano de destilação do Fable 5 para Qwen3-8B Base no Google Colab Pro
+# Plano de especialização do Fable 5 para Qwen3-8B no Google Colab Pro
 
 ## 1. Objetivo
 
-Construir um modelo de até 8 bilhões de parâmetros, baseado em **Qwen3-8B Base**, especializado em comportamento de agente de programação inspirado no Fable 5.
+Especializar o **Qwen3-8B pós-treinado** em comportamento de agente de
+programação inspirado no Fable 5, preservando instruction-following, tool
+calling e os modos nativos thinking/non-thinking.
 
 O objetivo não é reproduzir integralmente o Fable 5. Com os traces públicos disponíveis, o resultado esperado é um modelo capaz de aprender principalmente:
 
@@ -52,15 +54,17 @@ Não assumir que uma única sessão do Colab será suficiente para todo o projet
 Modelo-base:
 
 ```text
-Qwen/Qwen3-8B-Base
+Qwen/Qwen3-8B
 ```
 
-Não usar inicialmente a variante Instruct. A versão Base permite controlar melhor o comportamento introduzido pelo pós-treinamento.
+Usar o checkpoint pós-treinado, pois os traces disponíveis especializam uma
+política agentic existente, mas não substituem o volume de SFT e RL necessário
+para reconstruir com segurança o alinhamento do checkpoint Base.
 
 Tokenizer:
 
 ```text
-AutoTokenizer.from_pretrained("Qwen/Qwen3-8B-Base", trust_remote_code=True)
+AutoTokenizer.from_pretrained("Qwen/Qwen3-8B", trust_remote_code=True)
 ```
 
 Configuração de quantização sugerida:
@@ -316,7 +320,7 @@ Exemplo:
     },
     {
       "role": "assistant",
-      "content": "<plan>Inspect the repository and locate the relevant implementation.</plan>\n<tool_call>{\"name\":\"list_files\",\"arguments\":{\"path\":\".\"}}</tool_call>"
+      "content": "<think>Inspect the repository and locate the relevant implementation.</think>\n<tool_call>{\"name\":\"list_files\",\"arguments\":{\"path\":\".\"}}</tool_call>"
     },
     {
       "role": "tool",
@@ -584,15 +588,15 @@ Peso aproximado:
 30%
 ```
 
-### 15.2 Plano comprimido
+### 15.2 Raciocínio comprimido
 
 ```xml
-<plan>
+<think>
 1. Inspect relevant files.
 2. Reproduce the failure.
 3. Apply a minimal patch.
 4. Run focused tests.
-</plan>
+</think>
 ```
 
 Peso aproximado:
@@ -617,7 +621,11 @@ Implementar um campo:
 reasoning_mode = long | compressed | hidden
 ```
 
-Para reasoning comprimido, começar com regras heurísticas. Uma etapa posterior pode usar outro modelo para resumir CoTs, mas essa geração deve ficar separada do pipeline básico e ser cacheada.
+Os modos `long` e `compressed` preservam o thinking mode oficial. O modo
+`hidden` usa `enable_thinking=False` no template do tokenizer. Para reasoning
+comprimido, começar com regras heurísticas. Uma etapa posterior pode usar outro
+modelo para resumir CoTs, mas essa geração deve ficar separada do pipeline
+básico e ser cacheada.
 
 Objetivo: ensinar decisão e planejamento, não verbosidade imitativa.
 
@@ -632,7 +640,7 @@ Usar QLoRA 4-bit com PEFT.
 Configuração inicial:
 
 ```yaml
-model_name: Qwen/Qwen3-8B-Base
+model_name: Qwen/Qwen3-8B
 load_in_4bit: true
 bnb_4bit_quant_type: nf4
 bnb_4bit_use_double_quant: true
@@ -717,7 +725,7 @@ Ajustar pela memória real observada.
 
 ```yaml
 optim: paged_adamw_8bit
-learning_rate: 0.0001
+learning_rate: 0.00005
 weight_decay: 0.01
 warmup_ratio: 0.03
 lr_scheduler_type: cosine
@@ -727,15 +735,15 @@ max_grad_norm: 1.0
 Faixa para busca curta:
 
 ```text
+2e-5
 5e-5
-1e-4
-1.5e-4
+8e-5
 ```
 
 Valor inicial recomendado:
 
 ```text
-1e-4
+5e-5
 ```
 
 ### 16.6 Épocas
@@ -835,7 +843,7 @@ Configuração:
 ```text
 retomar adapter da fase 1
 seq_len=8192
-learning rate menor, por exemplo 5e-5
+learning rate menor, por exemplo 2e-5
 0.25 a 0.75 época
 ```
 
@@ -942,7 +950,7 @@ Executar uma pequena suíte para detectar regressão:
 
 Comparar:
 
-1. Qwen3-8B Base original.
+1. Qwen3-8B pós-treinado original.
 2. Adapter após fase 1.
 3. Adapter após fase 2.
 4. Modelo após preferência, se houver.
@@ -1149,7 +1157,7 @@ O Codex deve produzir:
 
 A fase inicial será aceita quando:
 
-- o Qwen3-8B Base carregar em 4-bit na L4;
+- o Qwen3-8B pós-treinado carregar em 4-bit na L4;
 - um treino curto completar sem OOM;
 - checkpoint e retomada funcionarem;
 - o adapter puder ser recarregado;
@@ -1174,7 +1182,7 @@ A fase principal será aceita quando:
 
 ```yaml
 model:
-  name: Qwen/Qwen3-8B-Base
+  name: Qwen/Qwen3-8B
   load_in_4bit: true
   quant_type: nf4
   double_quant: true
@@ -1200,7 +1208,7 @@ training:
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
   gradient_accumulation_steps: 16
-  learning_rate: 1.0e-4
+  learning_rate: 5.0e-5
   num_train_epochs: 1.0
   warmup_ratio: 0.03
   weight_decay: 0.01

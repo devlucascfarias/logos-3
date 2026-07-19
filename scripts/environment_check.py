@@ -7,12 +7,13 @@ from pathlib import Path
 import _bootstrap  # noqa: F401
 
 from fable_distill.callbacks import environment_snapshot
+from fable_distill.formatting import render_generation_prompt
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Record CUDA/package environment and optional 4-bit smoke test")
     parser.add_argument("--output", default="outputs/logs/environment.json")
-    parser.add_argument("--model", default="Qwen/Qwen3-8B-Base")
+    parser.add_argument("--model", default="Qwen/Qwen3-8B")
     parser.add_argument("--model-smoke", action="store_true")
     return parser.parse_args()
 
@@ -39,10 +40,14 @@ def main() -> None:
             import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
         except ImportError as exc:
-            raise SystemExit("Install training dependencies: pip install -r requirements.txt") from exc
+            raise SystemExit(
+                "Install training dependencies: pip install -r requirements.txt"
+            ) from exc
         if not torch.cuda.is_available():
             raise SystemExit("--model-smoke requires a CUDA GPU")
         tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token = tokenizer.eos_token
         model = AutoModelForCausalLM.from_pretrained(
             args.model,
             quantization_config=BitsAndBytesConfig(
@@ -55,7 +60,15 @@ def main() -> None:
             attn_implementation="sdpa",
             trust_remote_code=True,
         )
-        encoded = tokenizer("Return a short Python function.", return_tensors="pt").to(model.device)
+        prompt, _ = render_generation_prompt(
+            tokenizer,
+            {"instruction": "Return a short Python function.", "reasoning_mode": "hidden"},
+        )
+        encoded = tokenizer(
+            prompt,
+            return_tensors="pt",
+            add_special_tokens=False,
+        ).to(model.device)
         with torch.inference_mode():
             logits = model(**encoded).logits
         snapshot["model_smoke"] = {
@@ -72,4 +85,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -90,6 +90,10 @@ def main() -> None:
     weights: dict[str, float] = {}
     source_rows = 0
     counters: Counter[str] = Counter()
+    reasoning_mode_weights = {
+        str(name): float(weight)
+        for name, weight in config.get("sampling", {}).get("reasoning_modes", {}).items()
+    }
 
     for source in config.get("sources", []):
         alias = str(source.get("alias"))
@@ -138,7 +142,10 @@ def main() -> None:
                 if canonical.quality_score < min_score:
                     counters["filtered_quality"] += 1
                     continue
-                for training_example in build_training_examples(canonical):
+                for training_example in build_training_examples(
+                    canonical,
+                    reasoning_mode_weights=reasoning_mode_weights or None,
+                ):
                     row = flatten_for_training(training_example)
                     row["normalized_prompt_hash"] = normalized_prompt_hash(
                         training_example.messages
@@ -202,6 +209,9 @@ def main() -> None:
     written = write_jsonl(output, rows)
     selected_sources = Counter(str(row.get("source_dataset", "unknown")) for row in rows)
     selected_types = Counter(str(row.get("target_type", "unknown")) for row in rows)
+    selected_reasoning_modes = Counter(
+        str(row.get("reasoning_mode", "unknown")) for row in rows
+    )
     report = {
         "source_rows_read": source_rows,
         "raw_available_examples": raw_available,
@@ -211,6 +221,8 @@ def main() -> None:
         "written": written,
         "selected_by_source": dict(selected_sources),
         "selected_by_type": dict(selected_types),
+        "selected_by_reasoning_mode": dict(selected_reasoning_modes),
+        "configured_reasoning_mode_weights": reasoning_mode_weights,
         **dict(counters),
     }
     report_path = output.with_suffix(".report.json")

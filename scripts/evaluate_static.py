@@ -9,6 +9,10 @@ from typing import Iterable
 
 import _bootstrap  # noqa: F401
 
+from fable_distill.formatting import (
+    reasoning_mode_uses_thinking,
+    render_generation_prompt,
+)
 from fable_distill.io import iter_jsonl
 from fable_distill.tools import parse_tool_call
 
@@ -78,6 +82,29 @@ def compute_report(rows: Iterable[dict]) -> dict:
     }
 
 
+def _generation_kwargs(generation: dict, reasoning_mode: str) -> dict:
+    thinking = reasoning_mode_uses_thinking(reasoning_mode)
+    profile_name = "thinking" if thinking else "non_thinking"
+    profile = dict(generation.get("profiles", {}).get(profile_name, {}))
+    do_sample = bool(profile.get("do_sample", True))
+    kwargs = {
+        "max_new_tokens": int(generation.get("max_new_tokens", 512)),
+        "do_sample": do_sample,
+        "repetition_penalty": float(generation.get("repetition_penalty", 1.0)),
+    }
+    if do_sample:
+        kwargs.update(
+            {
+                "temperature": float(
+                    profile.get("temperature", 0.6 if thinking else 0.7)
+                ),
+                "top_p": float(profile.get("top_p", 0.95 if thinking else 0.8)),
+                "top_k": int(profile.get("top_k", 20)),
+            }
+        )
+    return kwargs
+
+
 def generate_comparison(config: dict, limit: int | None, output_path: Path) -> dict:
     try:
         import torch
@@ -108,6 +135,8 @@ def generate_comparison(config: dict, limit: int | None, output_path: Path) -> d
     for variant_name, adapter in variants:
         set_global_seed(int(generation.get("seed", 42)))
         tokenizer = AutoTokenizer.from_pretrained(base_name, trust_remote_code=True)
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token = tokenizer.eos_token
         model = AutoModelForCausalLM.from_pretrained(
             base_name,
             quantization_config=BitsAndBytesConfig(
@@ -125,20 +154,24 @@ def generate_comparison(config: dict, limit: int | None, output_path: Path) -> d
         model.eval()
         generated_rows: list[dict] = []
         for index, row in enumerate(rows):
-            prompt = str(row.get("prompt", ""))
-            encoded = tokenizer(prompt, return_tensors="pt", truncation=True).to(model.device)
+            prompt, reasoning_mode = render_generation_prompt(tokenizer, row)
+            encoded = tokenizer(
+                prompt,
+                return_tensors="pt",
+                add_special_tokens=False,
+                truncation=True,
+            ).to(model.device)
             torch.manual_seed(int(generation.get("seed", 42)) + index)
+            generation_kwargs = _generation_kwargs(generation, reasoning_mode)
             with torch.inference_mode():
                 generated = model.generate(
                     **encoded,
-                    max_new_tokens=int(generation.get("max_new_tokens", 512)),
-                    do_sample=bool(generation.get("do_sample", False)),
-                    temperature=max(float(generation.get("temperature", 0.0)), 1e-5),
-                    pad_token_id=tokenizer.eos_token_id,
+                    **generation_kwargs,
+                    pad_token_id=tokenizer.pad_token_id,
                 )
             prediction = tokenizer.decode(
                 generated[0, encoded["input_ids"].shape[1] :],
-                skip_special_tokens=False,
+                skip_special_tokens=True,
             )
             generated_rows.append(
                 {
@@ -147,6 +180,9 @@ def generate_comparison(config: dict, limit: int | None, output_path: Path) -> d
                     "target_tool_name": row.get("target_tool_name"),
                     "variant": variant_name,
                     "seed": int(generation.get("seed", 42)) + index,
+                    "reasoning_mode": reasoning_mode,
+                    "enable_thinking": reasoning_mode_uses_thinking(reasoning_mode),
+                    "generation": generation_kwargs,
                 }
             )
         prediction_path = predictions_dir / f"{variant_name}.jsonl"
