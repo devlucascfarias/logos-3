@@ -1,0 +1,2 @@
+# Um ID por linha. Use IDs de problema, instância, sessão ou repositório
+# reservados para avaliação. Linhas iniciadas por # são ignoradas.

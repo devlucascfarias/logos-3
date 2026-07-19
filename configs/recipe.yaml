@@ -1,0 +1,155 @@
+seed: 42
+model_name: Qwen/Qwen3-8B
+model_revision: b968826d9c46dd6066d109eabc6255188de91218
+system_prompt: >-
+  Você é um assistente especializado em programação. Analise a evidência,
+  produza código correto, use ferramentas quando necessário e valide a solução.
+
+data:
+  max_seq_length: 4096
+  candidate_oversample: 1.35
+  shuffle_buffer: 10000
+  validation_fraction: 0.02
+  max_tool_output_chars: 12000
+  max_tool_messages: 48
+  max_repeated_message_run: 2
+  min_tokens: 32
+  holdout_ids_file: data/eval_holdout_ids.txt
+  blocked_benchmark_markers:
+    - humaneval
+    - mbpp
+    - livecodebench
+  reasoning_distribution:
+    short: 0.55
+    medium: 0.25
+    long: 0.10
+    direct: 0.10
+
+stages:
+  baseline:
+    token_budget: 15000000
+    category_weights:
+      verified_code: 0.60
+      reasoning: 0.20
+      swe: 0.10
+      claude_code: 0.05
+      general_tools: 0.05
+    training:
+      output_dir: outputs/checkpoints/baseline
+      adapter_output_dir: outputs/adapters/baseline
+      learning_rate: 0.0001
+      num_train_epochs: 1
+      max_seq_length: 4096
+  main:
+    token_budget: 50000000
+    category_weights:
+      verified_code: 0.45
+      reasoning: 0.20
+      swe: 0.20
+      claude_code: 0.10
+      general_tools: 0.05
+    training:
+      output_dir: outputs/checkpoints/main
+      adapter_output_dir: outputs/adapters/main
+      learning_rate: 0.0001
+      num_train_epochs: 1
+      max_seq_length: 4096
+  agentic:
+    token_budget: 10000000
+    category_weights:
+      swe: 1.00
+    successful_trajectories_only: true
+    training:
+      output_dir: outputs/checkpoints/agentic
+      adapter_output_dir: outputs/adapters/agentic
+      # Preencha com o adapter escolhido por scripts/select_checkpoint.py.
+      adapter_path: null
+      learning_rate: 0.00003
+      num_train_epochs: 1
+      max_seq_length: 4096
+
+training_defaults:
+  load_in_4bit: true
+  bnb_4bit_quant_type: nf4
+  bnb_4bit_use_double_quant: true
+  bnb_4bit_compute_dtype: bfloat16
+  attn_implementation: sdpa
+  packing: true
+  # "wrapped" mantém o packing sem exigir FlashAttention/padding-free.
+  packing_strategy: wrapped
+  assistant_only_loss: true
+  lora_r: 32
+  lora_alpha: 64
+  lora_dropout: 0.05
+  lora_bias: none
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 16
+  gradient_checkpointing: true
+  use_reentrant: false
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  optim: paged_adamw_8bit
+  bf16: true
+  tf32: true
+  logging_steps: 5
+  save_steps: 250
+  eval_steps: 250
+  save_total_limit: 3
+  report_to: tensorboard
+
+sources:
+  - name: nvidia/OpenCodeReasoning
+    config_name: split_0
+    split: split_0
+    category: verified_code
+    source_weight: 0.65
+    license: cc-by-4.0
+    trusted_curated: true
+  - name: nvidia/Nemotron-Competitive-Programming-v1
+    split: competitive_coding_python_part00
+    category: verified_code
+    source_weight: 0.175
+    license: cc-by-4.0
+    trusted_curated: true
+  - name: nvidia/Nemotron-Competitive-Programming-v1
+    split: competitive_coding_python_part01
+    category: verified_code
+    source_weight: 0.175
+    license: cc-by-4.0
+    trusted_curated: true
+  - name: open-thoughts/OpenThoughts-114k
+    split: train
+    category: reasoning
+    source_weight: 1.0
+    license: apache-2.0
+    trusted_curated: true
+  - name: nvidia/Nemotron-SFT-SWE-v2
+    split: openhands_swe
+    category: swe
+    source_weight: 1.0
+    license: cc-by-4.0
+    trusted_curated: true
+  - name: nlile/misc-merged-claude-code-traces-v1
+    split: train
+    category: claude_code
+    source_weight: 1.0
+    license: mixed
+    require_patch: true
+    reject_empty_response: true
+  - name: nvidia/Nemotron-Post-Training-Dataset-v1
+    split: tool_calling
+    category: general_tools
+    source_weight: 1.0
+    license: cc-by-4.0
+    trusted_curated: true

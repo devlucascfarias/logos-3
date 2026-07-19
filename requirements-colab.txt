@@ -1,0 +1,12 @@
+# Versões verificadas em 2026-07-19. O PyTorch CUDA já vem no Colab.
+transformers==5.14.1
+trl==1.8.0
+peft==0.19.1
+bitsandbytes==0.49.2
+datasets==5.0.0
+accelerate==1.14.0
+huggingface-hub>=1.4,<2
+safetensors>=0.6,<1
+sentencepiece>=0.2,<1
+PyYAML>=6.0.2,<7
+tensorboard>=2.20,<3

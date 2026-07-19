@@ -1,0 +1,17 @@
+weights:
+  code_verified: 0.40
+  debugging: 0.25
+  swe_tasks: 0.15
+  tool_use: 0.10
+  general_quality: 0.10
+penalties:
+  repetition: 1.0
+  overthinking: 1.0
+required_metrics:
+  - code_verified
+  - debugging
+  - swe_tasks
+  - tool_use
+  - general_quality
+  - repetition
+  - overthinking

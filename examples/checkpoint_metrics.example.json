@@ -1,0 +1,13 @@
+{
+  "checkpoint": "outputs/checkpoints/main/checkpoint-1000",
+  "metrics": {
+    "code_verified": 0.72,
+    "debugging": 0.68,
+    "swe_tasks": 0.54,
+    "tool_use": 0.71,
+    "general_quality": 0.66,
+    "repetition": 0.02,
+    "overthinking": 0.04
+  },
+  "notes": "Preencha com resultados do mesmo conjunto de avaliação usado no base."
+}
