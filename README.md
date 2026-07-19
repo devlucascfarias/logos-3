@@ -45,6 +45,11 @@ python -m pip install -e . --no-deps
 `flash-attn` é deliberadamente opcional. O padrão é SDPA, mais previsível no
 Colab. Instale Flash Attention separadamente apenas se a imagem CUDA suportar.
 
+O Colab usa `numpy==2.0.2`. A célula inicial verifica `numpy.char` e a camada de
+geração do Transformers em um subprocesso. Se detectar uma instalação binária
+inconsistente, reinstala o NumPy e reinicia o kernel uma única vez; depois basta
+executar o notebook novamente desde o início.
+
 ## Execução no Colab
 
 Abra somente:
