@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 from collections import Counter
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +79,71 @@ def _tokenizer_functions(model_name: str, revision: str):
     return count_messages, count_text
 
 
+def _buffered_shuffle(
+    rows: Iterable[dict[str, Any]], seed: int, buffer_size: int
+) -> Iterator[dict[str, Any]]:
+    if buffer_size <= 1:
+        yield from rows
+        return
+
+    rng = random.Random(seed)
+    buffer: list[dict[str, Any]] = []
+    for row in rows:
+        if len(buffer) < buffer_size:
+            buffer.append(row)
+            continue
+        index = rng.randrange(len(buffer))
+        yield buffer[index]
+        buffer[index] = row
+
+    while buffer:
+        yield buffer.pop(rng.randrange(len(buffer)))
+
+
+def _load_raw_jsonl_stream(
+    source: dict[str, Any], seed: int, shuffle_buffer: int
+) -> Iterator[dict[str, Any]]:
+    try:
+        from huggingface_hub import HfFileSystem
+    except ImportError as exc:
+        raise SystemExit(
+            "Instale as dependências: pip install -r requirements-colab.txt"
+        ) from exc
+
+    revision = source.get("revision", "main")
+    remote_path = (
+        f"datasets/{source['name']}@{revision}/{source['raw_jsonl_file']}"
+    )
+    token = os.environ.get("HF_TOKEN")
+    filesystem = HfFileSystem(token=token)
+
+    def rows() -> Iterator[dict[str, Any]]:
+        with filesystem.open(remote_path, "r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    row = json.loads(stripped)
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(
+                        f"JSON inválido em {remote_path}:{line_number}"
+                    ) from exc
+                if not isinstance(row, dict):
+                    raise RuntimeError(
+                        f"Linha não é um objeto JSON em "
+                        f"{remote_path}:{line_number}"
+                    )
+                yield row
+
+    source_buffer = int(source.get("shuffle_buffer", shuffle_buffer))
+    return _buffered_shuffle(rows(), seed=seed, buffer_size=source_buffer)
+
+
 def _load_stream(source: dict[str, Any], seed: int, shuffle_buffer: int):
+    if source.get("raw_jsonl_file"):
+        return _load_raw_jsonl_stream(source, seed, shuffle_buffer)
+
     try:
         from datasets import load_dataset
     except ImportError as exc:

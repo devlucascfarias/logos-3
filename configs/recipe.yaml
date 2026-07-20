@@ -136,6 +136,10 @@ sources:
     trusted_curated: true
   - name: nvidia/Nemotron-SFT-SWE-v2
     split: openhands_swe
+    # O schema publicado omite colunas presentes no JSONL e quebra o streaming
+    # do datasets==5.0.0. Leia o arquivo bruto até a fonte corrigir o metadata.
+    raw_jsonl_file: data/swe.jsonl
+    shuffle_buffer: 256
     category: swe
     source_weight: 1.0
     license: cc-by-4.0
