@@ -18,6 +18,9 @@ def test_recipe_is_valid_and_matches_core_parameters():
     assert training["gradient_accumulation_steps"] == 16
     assert training["bnb_4bit_quant_type"] == "nf4"
     assert config["stages"]["main"]["category_weights"]["verified_code"] == 0.45
+    assert config["data"]["validation_min_examples"] == 16
+    assert config["data"]["min_token_budget_fraction"] == 0.95
+    assert config["data"]["reasoning_distribution"]["direct"] == 0.45
 
 
 def test_invalid_distribution_is_rejected():

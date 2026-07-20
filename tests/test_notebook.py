@@ -26,3 +26,5 @@ def test_colab_notebook_is_valid_and_references_pipeline():
     assert "compare_adapter.py" in source
     assert "comparison.md" in source
     assert "mapping.json" in source
+    assert "FRESH_SMOKE_RUN" in source
+    assert "outputs\" / \"archive" in source

@@ -327,6 +327,9 @@ def main() -> None:
         selected,
         validation_fraction=float(config["data"].get("validation_fraction", 0.02)),
         seed=int(config.get("seed", 42)),
+        min_validation_examples=int(
+            config["data"].get("validation_min_examples", 0)
+        ),
     )
 
     output_dir = Path(args.output_dir or f"data/processed/{args.stage}")
@@ -363,6 +366,34 @@ def main() -> None:
         raise SystemExit(
             "Nenhum exemplo de treino foi selecionado. Consulte "
             f"{report_path} para ver as rejeições por fonte."
+        )
+
+    max_reasoning_deviation = float(
+        config["data"].get("max_reasoning_deviation", 1.0)
+    )
+    if mix_report["max_reasoning_deviation"] > max_reasoning_deviation:
+        for stale_path in (train_path, validation_path):
+            if stale_path.exists():
+                stale_path.unlink()
+        raise SystemExit(
+            "A distribuição de raciocínio excedeu o desvio permitido "
+            f"({mix_report['max_reasoning_deviation']:.1%} > "
+            f"{max_reasoning_deviation:.1%}). Consulte "
+            f"{report_path} e aumente a diversidade dos candidatos."
+        )
+
+    min_budget_fraction = float(
+        config["data"].get("min_token_budget_fraction", 0.0)
+    )
+    if mix_report["budget_fraction"] < min_budget_fraction:
+        for stale_path in (train_path, validation_path):
+            if stale_path.exists():
+                stale_path.unlink()
+        raise SystemExit(
+            "O mixer não atingiu a cobertura mínima do orçamento "
+            f"({mix_report['budget_fraction']:.1%} < "
+            f"{min_budget_fraction:.1%}). Consulte {report_path} e aumente "
+            "a varredura de candidatos."
         )
 
     write_jsonl(train_path, (training_row(example) for example in train))

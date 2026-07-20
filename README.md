@@ -13,7 +13,8 @@ O fluxo entregue cobre:
 - remoção de segredos, holdouts, loops, duplicatas e exemplos inválidos;
 - segmentação por turnos de traces que excedem 4096 tokens;
 - mistura `60/20/10/5/5` no baseline e `45/20/20/10/5` no SFT principal;
-- distribuição de raciocínio `55/25/10/10`;
+- distribuição de raciocínio controlada, com respostas diretas predominantes
+  e limite explícito para raciocínios longos;
 - QLoRA rank 32 sobre atenção e MLP, batch efetivo 16;
 - retomada automática e continuação agentic a partir de um adapter escolhido;
 - seleção do checkpoint pela fórmula da receita.
@@ -22,9 +23,10 @@ O fluxo entregue cobre:
 
 Abra e execute
 [`notebooks/qwen3_8b_l4_sft_colab.ipynb`](notebooks/qwen3_8b_l4_sft_colab.ipynb).
-O notebook começa em modo smoke test: prepara até 250 mil tokens e executa 30
-steps. Depois de validar o ambiente, troque `SMOKE_TEST` para `False` para usar o
-orçamento configurado.
+O notebook começa em modo smoke test: prepara até 250 mil tokens e executa uma
+época sobre no máximo 250 exemplos. O Trainer calcula os steps, evitando
+repetições artificiais da pequena amostra. Depois de validar o ambiente, troque
+`SMOKE_TEST` para `False` para usar o orçamento configurado.
 
 Crie um secret `HF_TOKEN` no Colab. Se o repositório não for público, crie
 também `GH_TOKEN` com permissão somente de leitura.
@@ -45,11 +47,10 @@ Valide o pipeline com um corpus pequeno:
 python scripts/prepare_data.py \
   --stage baseline \
   --token-budget 250000 \
-  --max-source-rows 1000
+  --max-source-rows 5000
 pytest -q
 python scripts/train_sft.py \
   --stage baseline \
-  --max-steps 30 \
   --max-train-samples 250
 ```
 
@@ -91,7 +92,10 @@ O relatório `data/processed/<stage>/dataset_report.json` mostra tokens por
 categoria, comprimento de raciocínio, rejeições por fonte e isolamento de
 grupos entre treino e validação. `budget_reached=false` significa que a
 varredura não encontrou candidatos suficientes; aumente `--max-source-rows` ou
-remova esse limite.
+remova esse limite. O preparo interrompe antes do treino quando a cobertura
+fica abaixo de 95% ou a distribuição de raciocínio excede o desvio máximo
+configurado. A validação reserva pelo menos 16 exemplos sem sobreposição de
+grupos.
 
 Adicione IDs reservados para avaliação em
 [`data/eval_holdout_ids.txt`](data/eval_holdout_ids.txt) **antes** do
@@ -119,6 +123,16 @@ confirme batch 1 e checkpointing, depois LoRA rank 16. Só então desative a
 avaliação com `--no-eval`.
 
 ## Avaliação e checkpoint
+
+Para o smoke comportamental, compare cegamente o modelo-base com o adapter nos
+13 prompts inéditos da suíte:
+
+```bash
+python scripts/compare_adapter.py --stage baseline
+```
+
+Avalie `outputs/evaluations/baseline_smoke/comparison.md` antes de consultar
+`mapping.json`.
 
 Avalie o base e todos os checkpoints no mesmo conjunto descontaminado. O
 pipeline deixa a execução de código gerado para um container/VM separado:

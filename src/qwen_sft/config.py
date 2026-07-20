@@ -34,6 +34,20 @@ def validate_config(config: dict[str, Any]) -> None:
     data = config["data"]
     if int(data["max_seq_length"]) <= 0:
         raise ValueError("data.max_seq_length deve ser positivo.")
+    if int(data.get("validation_min_examples", 0)) < 0:
+        raise ValueError("data.validation_min_examples não pode ser negativo.")
+    max_reasoning_deviation = float(data.get("max_reasoning_deviation", 1.0))
+    if not 0 <= max_reasoning_deviation <= 1:
+        raise ValueError(
+            "data.max_reasoning_deviation deve estar no intervalo [0, 1]."
+        )
+    min_token_budget_fraction = float(
+        data.get("min_token_budget_fraction", 0.0)
+    )
+    if not 0 <= min_token_budget_fraction <= 1:
+        raise ValueError(
+            "data.min_token_budget_fraction deve estar no intervalo [0, 1]."
+        )
     _validate_distribution(
         "data.reasoning_distribution", data["reasoning_distribution"]
     )

@@ -13,5 +13,55 @@
     "id": "retry_contract",
     "title": "Contrato de retry",
     "prompt": "Implemente `retry(operation, attempts, retry_on)` em Python.\n\nContrato:\n- `operation` é uma função sem argumentos;\n- `attempts` deve ser inteiro positivo, caso contrário levante `ValueError`;\n- capture somente exceções compatíveis com `retry_on`;\n- retorne imediatamente no primeiro sucesso;\n- na última falha, propague a própria exceção capturada;\n- não espere, não faça logging e não use imports;\n- inclua explicação breve, exatamente um bloco Python e asserts demonstrando sucesso após falhas e propagação final."
+  },
+  {
+    "id": "first_occurrence",
+    "title": "Busca binária da primeira ocorrência",
+    "prompt": "Implemente `first_index(values, target)` para uma sequência ordenada que pode conter duplicatas. Retorne o índice da primeira ocorrência ou `-1`.\n\nRequisitos:\n- complexidade O(log n);\n- não usar `list.index`, slicing ou imports;\n- não modificar a sequência;\n- explicação breve, exatamente um bloco Python e asserts para vazio, ausente e duplicatas."
+  },
+  {
+    "id": "chunked_iterator",
+    "title": "Iterador em lotes",
+    "prompt": "Implemente `chunked(iterable, size)` como generator, aceitando inclusive iteradores de uso único.\n\nRequisitos:\n- `size` deve ser inteiro positivo; `bool` não é aceito;\n- consumir o iterable apenas uma vez;\n- não materializar toda a entrada;\n- produzir listas de no máximo `size` elementos;\n- não usar imports;\n- explicação breve, exatamente um bloco Python e asserts incluindo generator e lote final incompleto."
+  },
+  {
+    "id": "deep_merge",
+    "title": "Merge recursivo sem mutação",
+    "prompt": "Implemente `deep_merge(left, right)` para dicionários. Quando os valores de uma chave forem dicionários em ambos os lados, faça merge recursivo; em qualquer outro caso, use o valor de `right`.\n\nRequisitos:\n- não modificar nenhum argumento;\n- dicionários resultantes não podem compartilhar subdicionários mutáveis com as entradas;\n- listas e outros valores podem ser tratados como valores escalares;\n- não usar imports;\n- explicação breve, exatamente um bloco Python e asserts que comprovem precedência, recursão e ausência de mutação."
+  },
+  {
+    "id": "stable_top_k",
+    "title": "Top-k estável",
+    "prompt": "Implemente `stable_top_k(items, k, key)` retornando os `k` itens de maior pontuação. Empates devem preservar a ordem original, e a saída deve vir em pontuação decrescente.\n\nRequisitos:\n- `k` deve ser inteiro não negativo; `bool` é inválido;\n- se `k` exceder o tamanho, retornar todos;\n- chamar `key` exatamente uma vez por item;\n- não modificar `items`;\n- usar apenas recursos nativos, sem imports;\n- explicação breve, exatamente um bloco Python e asserts cobrindo empate, `k=0` e `k` maior que a entrada."
+  },
+  {
+    "id": "parse_query",
+    "title": "Parser de query string",
+    "prompt": "Implemente `parse_query(text)` para entradas como `a=1&b=2&a=3`. Retorne um dicionário em que cada chave aponta para uma lista de valores na ordem de ocorrência.\n\nContrato:\n- segmentos vazios são ignorados;\n- cada segmento não vazio deve conter exatamente um `=`;\n- chave vazia é inválida;\n- entrada inválida levanta `ValueError` contendo o índice do segmento, começando em 1;\n- não fazer URL decoding e não usar imports;\n- explicação breve, exatamente um bloco Python e asserts para repetição, valor vazio e erro."
+  },
+  {
+    "id": "group_runs",
+    "title": "Agrupamento de ocorrências consecutivas",
+    "prompt": "Implemente `group_runs(iterable)` retornando pares `(valor, quantidade)` para ocorrências consecutivas. A entrada pode ser um generator e os valores podem ser não-hashable.\n\nRequisitos:\n- uma única passagem;\n- memória auxiliar O(1), desconsiderando a saída;\n- não usar imports;\n- retornar uma lista;\n- explicação breve, exatamente um bloco Python e asserts para vazio, listas como valores e repetições separadas."
+  },
+  {
+    "id": "dependency_order",
+    "title": "Ordenação de dependências",
+    "prompt": "Implemente `dependency_order(graph)` onde `graph` mapeia cada tarefa para uma lista de dependências. Retorne uma ordem válida contendo também dependências que não aparecem como chaves.\n\nContrato:\n- não modificar `graph`;\n- resultado determinístico, visitando chaves e dependências na ordem recebida;\n- ciclos levantam `ValueError` contendo uma tarefa participante;\n- não usar imports;\n- explicação breve, exatamente um bloco Python e asserts para cadeia, dependência externa e ciclo."
+  },
+  {
+    "id": "memoize_one",
+    "title": "Cache da última chamada",
+    "prompt": "Implemente `memoize_last(function)` retornando uma função que armazena somente o resultado da chamada mais recente.\n\nRequisitos:\n- aceitar argumentos posicionais e nomeados;\n- considerar chamadas equivalentes apenas quando `args` e `kwargs` forem iguais, sem exigir que seus valores sejam hashable;\n- preservar exceções: chamadas que falham não entram no cache;\n- não usar imports;\n- explicação breve, exatamente um bloco Python e asserts que contem chamadas reais, cache hit e falha não armazenada."
+  },
+  {
+    "id": "rolling_average",
+    "title": "Média móvel validada",
+    "prompt": "Implemente `rolling_average(values, window)` retornando as médias de todas as janelas completas.\n\nRequisitos:\n- `window` deve ser inteiro positivo e `bool` é inválido;\n- aceitar qualquer iterable numérico, inclusive generator;\n- consumir a entrada uma vez;\n- complexidade O(n), sem recalcular cada soma do zero;\n- se não houver janela completa, retornar `[]`;\n- não usar imports;\n- explicação breve, exatamente um bloco Python e asserts para generator, janela 1 e janela maior que a entrada."
+  },
+  {
+    "id": "atomic_update",
+    "title": "Atualização atômica em memória",
+    "prompt": "Implemente `apply_updates(state, updates, validator)`. Cada item de `updates` é um par `(key, value)`. Aplique-os em ordem a uma cópia rasa de `state`; depois de cada aplicação, chame `validator(candidate)`. Se alguma validação retornar falso ou levantar exceção, `state` deve permanecer inalterado e a falha deve ser propagada (`ValueError` quando retornar falso).\n\nRequisitos:\n- não modificar `state` nem `updates`;\n- retornar o novo dicionário em caso de sucesso;\n- não usar imports;\n- explicação breve, exatamente um bloco Python e asserts para sucesso, retorno falso e exceção."
   }
 ]

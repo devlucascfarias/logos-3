@@ -564,44 +564,88 @@ def mix_by_tokens(
     selected: list[dict[str, Any]] = []
     selected_ids: set[str] = set()
     category_tokens: Counter[str] = Counter()
+    reasoning_tokens: Counter[str] = Counter()
+
+    def add(chosen: Sequence[dict[str, Any]]) -> None:
+        selected.extend(chosen)
+        for example in chosen:
+            tokens = int(example["num_tokens"])
+            category_tokens[str(example["category"])] += tokens
+            reasoning_tokens[str(example["reasoning_band"])] += tokens
 
     for category, category_weight in category_weights.items():
         for band, reasoning_weight in reasoning_weights.items():
             target = round(token_budget * category_weight * reasoning_weight)
-            chosen, tokens = _take_until(
+            chosen, _ = _take_until(
                 buckets.get((category, band), []), target, selected_ids
             )
-            selected.extend(chosen)
-            category_tokens[category] += tokens
+            add(chosen)
 
-    for category, category_weight in category_weights.items():
-        target = round(token_budget * category_weight)
-        deficit = max(0, target - category_tokens[category])
+    category_targets = {
+        category: round(token_budget * weight)
+        for category, weight in category_weights.items()
+    }
+    reasoning_targets = {
+        band: round(token_budget * weight)
+        for band, weight in reasoning_weights.items()
+    }
+
+    # Compensa categoria e faixa simultaneamente. O spill antigo usava qualquer
+    # faixa disponível e podia fazer "long" dominar mesmo após atingir sua meta.
+    for category in category_weights:
+        category_deficit = max(
+            0, category_targets[category] - category_tokens[category]
+        )
+        if not category_deficit:
+            continue
+        for band in sorted(
+            reasoning_weights,
+            key=lambda name: (
+                reasoning_targets[name] - reasoning_tokens[name],
+                reasoning_weights[name],
+            ),
+            reverse=True,
+        ):
+            reasoning_deficit = max(
+                0, reasoning_targets[band] - reasoning_tokens[band]
+            )
+            if not reasoning_deficit or category_deficit <= 0:
+                continue
+            chosen, _ = _take_until(
+                buckets.get((category, band), []),
+                min(category_deficit, reasoning_deficit),
+                selected_ids,
+            )
+            add(chosen)
+            category_deficit = max(
+                0, category_targets[category] - category_tokens[category]
+            )
+
+    # Permite que outra categoria cubra uma faixa deficitária, mas nunca
+    # completa o orçamento usando uma faixa de raciocínio já excedida.
+    for band in sorted(
+        reasoning_weights,
+        key=lambda name: (
+            reasoning_targets[name] - reasoning_tokens[name],
+            reasoning_weights[name],
+        ),
+        reverse=True,
+    ):
+        deficit = max(0, reasoning_targets[band] - reasoning_tokens[band])
         if not deficit:
             continue
         pool = _ordered(
             (
                 example
                 for example in unique
-                if example["category"] == category
+                if example["reasoning_band"] == band
                 and example["id"] not in selected_ids
             ),
             seed,
-            f"{category}:spill",
+            f"{band}:reasoning-spill",
         )
-        chosen, tokens = _take_until(pool, deficit, selected_ids)
-        selected.extend(chosen)
-        category_tokens[category] += tokens
-
-    total_tokens = sum(int(example["num_tokens"]) for example in selected)
-    if total_tokens < token_budget:
-        pool = _ordered(
-            (example for example in unique if example["id"] not in selected_ids),
-            seed,
-            "global-spill",
-        )
-        chosen, _ = _take_until(pool, token_budget - total_tokens, selected_ids)
-        selected.extend(chosen)
+        chosen, _ = _take_until(pool, deficit, selected_ids)
+        add(chosen)
 
     selected = _ordered(selected, seed, "final-shuffle")
     actual_total = sum(int(example["num_tokens"]) for example in selected)
@@ -622,14 +666,36 @@ def mix_by_tokens(
             for key, value in sorted(counter.items())
         }
 
+    actual_reasoning_distribution = distribution(actual_reasoning)
+    reasoning_deviation = {
+        band: round(
+            float(actual_reasoning_distribution.get(band, {}).get("fraction", 0.0))
+            - weight,
+            6,
+        )
+        for band, weight in reasoning_weights.items()
+    }
     report = {
         "requested_tokens": int(token_budget),
         "selected_tokens": actual_total,
+        "budget_fraction": round(actual_total / token_budget, 6),
         "selected_examples": len(selected),
         "available_unique_examples": len(unique),
         "budget_reached": actual_total >= token_budget,
         "category_distribution": distribution(actual_categories),
-        "reasoning_distribution": distribution(actual_reasoning),
+        "reasoning_distribution": actual_reasoning_distribution,
+        "reasoning_targets": {
+            band: {
+                "tokens": reasoning_targets[band],
+                "fraction": float(weight),
+            }
+            for band, weight in reasoning_weights.items()
+        },
+        "reasoning_deviation": reasoning_deviation,
+        "max_reasoning_deviation": max(
+            (abs(value) for value in reasoning_deviation.values()),
+            default=0.0,
+        ),
     }
     return selected, report
 
@@ -639,9 +705,12 @@ def split_by_group(
     *,
     validation_fraction: float,
     seed: int,
+    min_validation_examples: int = 0,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if not 0 <= validation_fraction < 1:
         raise ValueError("validation_fraction deve estar no intervalo [0, 1).")
+    if min_validation_examples < 0:
+        raise ValueError("min_validation_examples não pode ser negativo.")
     train: list[dict[str, Any]] = []
     validation: list[dict[str, Any]] = []
     threshold = int(validation_fraction * 10_000)
@@ -649,14 +718,32 @@ def split_by_group(
         bucket = int(_stable_hash(seed, example["group_id"])[:8], 16) % 10_000
         (validation if bucket < threshold else train).append(example)
 
-    if validation_fraction and len(examples) > 1 and not validation:
-        candidate_group = examples[-1]["group_id"]
-        validation = [
-            example for example in train if example["group_id"] == candidate_group
-        ]
-        train = [
-            example for example in train if example["group_id"] != candidate_group
-        ]
+    target_min = min(min_validation_examples, max(0, len(examples) - 1))
+    if validation_fraction and len(examples) > 1:
+        target_min = max(target_min, 1)
+    if len(validation) < target_min and train:
+        groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for example in train:
+            groups[str(example["group_id"])].append(example)
+        ordered_groups = sorted(
+            groups,
+            key=lambda group_id: _stable_hash(
+                seed, "validation-minimum", group_id
+            ),
+        )
+        for group_id in ordered_groups:
+            group = groups[group_id]
+            if len(train) == len(group):
+                continue
+            validation.extend(group)
+            group_ids = {str(example["id"]) for example in group}
+            train = [
+                example
+                for example in train
+                if str(example["id"]) not in group_ids
+            ]
+            if len(validation) >= target_min:
+                break
     if not train and validation:
         candidate_group = validation[0]["group_id"]
         train = [

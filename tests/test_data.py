@@ -153,7 +153,7 @@ def test_mix_is_by_tokens_and_group_split_has_no_overlap():
         _example(category, band, index)
         for category in categories
         for band in bands
-        for index in range(50)
+        for index in range(70)
     ]
     selected, report = mix_by_tokens(
         examples,
@@ -168,12 +168,54 @@ def test_mix_is_by_tokens_and_group_split_has_no_overlap():
         token_counts[example["category"]] += example["num_tokens"]
     assert token_counts["verified_code"] == 12_000
     assert token_counts["reasoning"] == 8_000
+    assert report["max_reasoning_deviation"] <= 0.01
 
     train, validation = split_by_group(
         selected, validation_fraction=0.2, seed=42
     )
     assert train
     assert validation
+    assert not (
+        {example["group_id"] for example in train}
+        & {example["group_id"] for example in validation}
+    )
+
+
+def test_mix_does_not_fill_a_shortage_with_an_overrepresented_band():
+    examples = [
+        *[_example("verified_code", "short", index) for index in range(2)],
+        *[_example("verified_code", "long", index) for index in range(20)],
+    ]
+    selected, report = mix_by_tokens(
+        examples,
+        token_budget=1000,
+        category_weights={"verified_code": 1.0},
+        reasoning_weights={"short": 0.5, "long": 0.5},
+        seed=42,
+    )
+
+    assert not report["budget_reached"]
+    assert sum(
+        item["num_tokens"]
+        for item in selected
+        if item["reasoning_band"] == "long"
+    ) == 500
+
+
+def test_group_split_honors_minimum_validation_size():
+    examples = [
+        _example("verified_code", "direct", index) for index in range(40)
+    ]
+
+    train, validation = split_by_group(
+        examples,
+        validation_fraction=0.02,
+        min_validation_examples=16,
+        seed=42,
+    )
+
+    assert train
+    assert len(validation) >= 16
     assert not (
         {example["group_id"] for example in train}
         & {example["group_id"] for example in validation}

@@ -20,7 +20,7 @@ def test_prepare_cli_with_local_candidates(tmp_path):
     rows = []
     for category in categories:
         for band in bands:
-            for index in range(4):
+            for index in range(80):
                 rows.append(
                     {
                         "id": f"{category}-{band}-{index}",
@@ -50,7 +50,7 @@ def test_prepare_cli_with_local_candidates(tmp_path):
             "--stage",
             "baseline",
             "--token-budget",
-            "1000",
+            "20_000",
             "--candidates-jsonl",
             str(candidate_path),
             "--output-dir",
@@ -67,6 +67,9 @@ def test_prepare_cli_with_local_candidates(tmp_path):
     assert (output_dir / "train.jsonl").exists()
     assert (output_dir / "validation.jsonl").exists()
     assert report["mix"]["budget_reached"]
+    assert report["mix"]["budget_fraction"] >= 0.95
+    assert report["mix"]["max_reasoning_deviation"] <= 0.08
+    assert report["split"]["validation_examples"] >= 16
     assert report["split"]["group_overlap"] is False
 
 

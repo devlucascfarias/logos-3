@@ -18,8 +18,8 @@ def test_prompt_fixture_is_valid():
         ROOT / "examples" / "smoke_eval_prompts.json"
     )
 
-    assert len(prompts) == 3
-    assert len({item["id"] for item in prompts}) == 3
+    assert len(prompts) == 13
+    assert len({item["id"] for item in prompts}) == 13
 
 
 def test_blind_results_are_deterministic_and_complete():

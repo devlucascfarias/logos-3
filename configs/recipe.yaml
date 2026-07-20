@@ -7,9 +7,12 @@ system_prompt: >-
 
 data:
   max_seq_length: 4096
-  candidate_oversample: 1.35
+  candidate_oversample: 2.5
   shuffle_buffer: 10000
   validation_fraction: 0.02
+  validation_min_examples: 16
+  max_reasoning_deviation: 0.08
+  min_token_budget_fraction: 0.95
   max_tool_output_chars: 12000
   max_tool_messages: 48
   max_repeated_message_run: 2
@@ -20,10 +23,12 @@ data:
     - mbpp
     - livecodebench
   reasoning_distribution:
-    short: 0.55
-    medium: 0.25
-    long: 0.10
-    direct: 0.10
+    # O corpus disponível contém poucos <think> curtos. Priorizamos respostas
+    # diretas e limitamos raciocínios longos sem criar/truncar CoT artificial.
+    short: 0.03
+    medium: 0.22
+    long: 0.30
+    direct: 0.45
 
 stages:
   baseline:
