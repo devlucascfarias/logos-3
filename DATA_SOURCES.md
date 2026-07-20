@@ -14,6 +14,9 @@ termos dessas revisões exatas.
 | SWE | `nvidia/Nemotron-SFT-SWE-v2` | traces OpenHands | split curado `openhands_swe` |
 | Claude Code | `nlile/misc-merged-claude-code-traces-v1` | traces reais | exige patch/diff e resposta não vazia |
 | Geral/ferramentas | `nvidia/Nemotron-Post-Training-Dataset-v1` | tool calling | split `tool_calling`, somente 5% por tokens |
+| Corretivo externo | `nvidia/OpenCodeInstruct` | tarefas Python curtas | revisão fixa, score perfeito, testes publicados parseados e reexecutados |
+| Corretivo local | `logos/corrective-contracts-v1` | 11 famílias de microcontratos | testes públicos e ocultos em executor restrito |
+| Replay corretivo | `pilot_500k_step7` | preservação de capacidade | hashes contra o manifesto do campeão e remoção de `<think>` |
 
 Links dos cards:
 
@@ -23,6 +26,28 @@ Links dos cards:
 - <https://huggingface.co/datasets/nvidia/Nemotron-SFT-SWE-v2>
 - <https://huggingface.co/datasets/nlile/misc-merged-claude-code-traces-v1>
 - <https://huggingface.co/datasets/nvidia/Nemotron-Post-Training-Dataset-v1>
+- <https://huggingface.co/datasets/nvidia/OpenCodeInstruct>
+
+## Corpus `corrective_v1`
+
+`OpenCodeInstruct` está fixado na revisão
+`8f3ba5bafe4d6e8db46082cf7ae6741bc370604d`. Uma linha externa só é aceita
+quando tem score médio 1.0, todos os testes publicados com status `pass`, notas
+5/5 em conformidade, correção lógica e edge cases, exatamente um bloco Python e
+execução aprovada. Os testes são interpretados com `ast.literal_eval`; dados
+malformados não têm fallback.
+
+As linhas corretivas usam somente os níveis `local_hidden_tests`,
+`local_public_tests` e `replay_champion`. `verified=true` exige evidência por
+linha com hash próprio, e o manifesto precisa declarar
+`production_eligible=true`. Testes ocultos ficam apenas nos arquivos de
+avaliação, nunca em `candidates.jsonl` ou `train.jsonl`.
+
+O `Self-OSS`, MBPP, HumanEval e LiveCodeBench não entram no treinamento desta
+rodada. Fontes NC, de licença desconhecida ou sem proveniência também são
+recusadas. No replay, a licença é recuperada da fonte original do piloto; a
+fonte Claude marcada como `mixed` e qualquer origem não reconhecida ficam fora
+do bucket corretivo.
 
 ## Regras aplicadas
 

@@ -6,6 +6,7 @@ from qwen_sft.data import (
     normalize_messages,
     semantic_segments,
     split_by_group,
+    training_row,
 )
 
 
@@ -89,7 +90,7 @@ def test_rejects_secrets_and_benchmark_contamination():
     source = {
         "name": "test/source",
         "category": "verified_code",
-        "trusted_curated": True,
+        "curated": True,
     }
     secret, reason = build_candidates(
         {
@@ -125,7 +126,7 @@ def test_rejects_repetition_and_unclosed_blocks():
     source = {
         "name": "test/source",
         "category": "verified_code",
-        "trusted_curated": True,
+        "curated": True,
     }
     repeated, reason = build_candidates(
         {
@@ -159,7 +160,7 @@ def test_can_deterministically_convert_reasoning_to_direct_answer():
     source = {
         "name": "test/source",
         "category": "verified_code",
-        "trusted_curated": True,
+        "curated": True,
     }
     data_config = {
         **DATA_CONFIG,
@@ -183,6 +184,60 @@ def test_can_deterministically_convert_reasoning_to_direct_answer():
     assert reason is None
     assert candidates[0]["reasoning_band"] == "direct"
     assert "<think>" not in candidates[0]["messages"][-1]["content"]
+
+
+def test_curated_metadata_does_not_fabricate_verification():
+    source = {
+        "name": "test/curated",
+        "category": "verified_code",
+        "curated": True,
+    }
+    candidates, reason = build_candidates(
+        {"id": "row", "input": "Fa\u00e7a algo.", "output": "Resposta direta."},
+        row_index=0,
+        source=source,
+        system_prompt=SYSTEM,
+        data_config=DATA_CONFIG,
+        token_counter=count_messages,
+        text_token_counter=count_text,
+    )
+    assert reason is None
+    assert candidates[0]["curated"] is True
+    assert candidates[0]["verified"] is False
+    assert candidates[0]["verification_evidence"] is None
+
+    rejected, reason = build_candidates(
+        {"id": "row", "input": "Fa\u00e7a algo.", "output": "Resposta direta."},
+        row_index=0,
+        source=source,
+        system_prompt=SYSTEM,
+        data_config=DATA_CONFIG,
+        token_counter=count_messages,
+        text_token_counter=count_text,
+        successful_only=True,
+    )
+    assert rejected == []
+    assert reason == "not_verified"
+
+
+def test_training_row_preserves_per_line_verification_evidence():
+    example = _example("corrective_contracts", "direct", 1)
+    example.update(
+        {
+            "curated": True,
+            "hidden_tests": "assert False",
+            "verification_level": "local_hidden_tests",
+            "verification_evidence": {
+                "status": "passed",
+                "sha256": "evidence",
+            },
+        }
+    )
+    row = training_row(example)
+    assert row["curated"] is True
+    assert row["verification_level"] == "local_hidden_tests"
+    assert row["verification_evidence"]["sha256"] == "evidence"
+    assert "hidden_tests" not in row
 
 
 def test_semantic_segmentation_keeps_assistant_targets():

@@ -21,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--stage",
         choices=(
+            "corrective_v1",
             "pilot",
             "pilot_continuation",
             "baseline",
@@ -183,8 +184,13 @@ def main() -> None:
     if reference_path and not (reference_path / "adapter_config.json").exists():
         raise SystemExit(f"Adapter de referência não encontrado: {reference_path}")
 
+    configured_output = config["stages"][args.stage]["training"].get(
+        "evaluation_output_dir"
+    )
     output_dir = Path(
-        args.output_dir or f"outputs/evaluations/{args.stage}_smoke"
+        args.output_dir
+        or configured_output
+        or f"outputs/evaluations/{args.stage}_smoke"
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -206,7 +212,11 @@ def main() -> None:
         raise SystemExit("A comparação requer CUDA.")
 
     print("[1/3] Carregando tokenizer e modelo-base em 4 bits...", flush=True)
-    tokenizer = AutoTokenizer.from_pretrained(adapter_path, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        config["model_name"],
+        revision=config.get("model_revision", "main"),
+        use_fast=True,
+    )
     quantization = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",

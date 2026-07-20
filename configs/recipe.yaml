@@ -43,6 +43,37 @@ data:
     verified_code: 0.45
 
 stages:
+  corrective_v1:
+    token_budget: 320000
+    category_weights:
+      corrective_contracts: 0.50
+      corrective_opencode: 0.35
+      corrective_replay: 0.15
+    data:
+      max_seq_length: 2048
+      candidate_oversample: 1.25
+      max_examples_per_group: 0
+      reasoning_distribution:
+        direct: 1.0
+    training:
+      requires_adapter: true
+      verify_source_data: false
+      # Fornecido pelo notebook/CLI; aponta para o piloto campeão preservado.
+      adapter_path: null
+      output_dir: outputs/checkpoints/corrective_v1
+      adapter_output_dir: outputs/adapters/corrective_v1
+      evaluation_output_dir: outputs/evaluations/corrective_v1
+      learning_rate: 0.00001
+      num_train_epochs: 1
+      max_seq_length: 2048
+      per_device_train_batch_size: 1
+      gradient_accumulation_steps: 8
+      logging_steps: 1
+      save_steps: 2
+      eval_steps: 2
+      save_total_limit: 12
+      min_optimizer_steps: 15
+      max_optimizer_steps: 25
   pilot:
     token_budget: 500000
     category_weights:
@@ -174,25 +205,25 @@ sources:
     category: verified_code
     source_weight: 0.65
     license: cc-by-4.0
-    trusted_curated: true
+    curated: true
   - name: nvidia/Nemotron-Competitive-Programming-v1
     split: competitive_coding_python_part00
     category: verified_code
     source_weight: 0.175
     license: cc-by-4.0
-    trusted_curated: true
+    curated: true
   - name: nvidia/Nemotron-Competitive-Programming-v1
     split: competitive_coding_python_part01
     category: verified_code
     source_weight: 0.175
     license: cc-by-4.0
-    trusted_curated: true
+    curated: true
   - name: open-thoughts/OpenThoughts-114k
     split: train
     category: reasoning
     source_weight: 1.0
     license: apache-2.0
-    trusted_curated: true
+    curated: true
   - name: nvidia/Nemotron-SFT-SWE-v2
     split: openhands_swe
     # O schema publicado omite colunas presentes no JSONL e quebra o streaming
@@ -202,7 +233,7 @@ sources:
     category: swe
     source_weight: 1.0
     license: cc-by-4.0
-    trusted_curated: true
+    curated: true
   - name: nlile/misc-merged-claude-code-traces-v1
     split: train
     category: claude_code
@@ -215,4 +246,23 @@ sources:
     category: general_tools
     source_weight: 1.0
     license: cc-by-4.0
-    trusted_curated: true
+    curated: true
+  - name: local/corrective-contracts-v1
+    category: corrective_contracts
+    source_weight: 1.0
+    license: project-generated
+    curated: true
+    local_only: true
+  - name: nvidia/OpenCodeInstruct
+    revision: 8f3ba5bafe4d6e8db46082cf7ae6741bc370604d
+    category: corrective_opencode
+    source_weight: 1.0
+    license: cc-by-4.0
+    curated: true
+    local_only: true
+  - name: local/pilot-champion-replay
+    category: corrective_replay
+    source_weight: 1.0
+    license: inherited
+    curated: true
+    local_only: true

@@ -98,6 +98,41 @@ def validate_config(config: dict[str, Any]) -> None:
                 f"stages.{stage_name}.training.data_stage desconhecido: "
                 f"{data_stage}"
             )
+        stage_data = dict(data)
+        stage_data.update(stage.get("data", {}))
+        if int(stage_data["max_seq_length"]) <= 0:
+            raise ValueError(
+                f"stages.{stage_name}.data.max_seq_length deve ser positivo."
+            )
+        if float(stage_data.get("candidate_oversample", 1.0)) < 1:
+            raise ValueError(
+                f"stages.{stage_name}.data.candidate_oversample deve ser "
+                "ao menos 1."
+            )
+        _validate_distribution(
+            f"stages.{stage_name}.data.reasoning_distribution",
+            stage_data["reasoning_distribution"],
+        )
+        minimum_steps = stage["training"].get("min_optimizer_steps")
+        maximum_steps = stage["training"].get("max_optimizer_steps")
+        if minimum_steps is not None and int(minimum_steps) <= 0:
+            raise ValueError(
+                f"stages.{stage_name}.training.min_optimizer_steps deve ser "
+                "positivo."
+            )
+        if maximum_steps is not None and int(maximum_steps) <= 0:
+            raise ValueError(
+                f"stages.{stage_name}.training.max_optimizer_steps deve ser "
+                "positivo."
+            )
+        if (
+            minimum_steps is not None
+            and maximum_steps is not None
+            and int(minimum_steps) > int(maximum_steps)
+        ):
+            raise ValueError(
+                f"Intervalo de passos inválido em stages.{stage_name}.training."
+            )
 
     categories = {
         category
@@ -131,4 +166,15 @@ def merged_training_config(
         raise ValueError(f"Etapa desconhecida: {stage_name}. Opções: {choices}")
     merged = dict(config["training_defaults"])
     merged.update(config["stages"][stage_name]["training"])
+    return merged
+
+
+def merged_data_config(
+    config: dict[str, Any], stage_name: str
+) -> dict[str, Any]:
+    if stage_name not in config["stages"]:
+        choices = ", ".join(sorted(config["stages"]))
+        raise ValueError(f"Etapa desconhecida: {stage_name}. Opções: {choices}")
+    merged = dict(config["data"])
+    merged.update(config["stages"][stage_name].get("data", {}))
     return merged

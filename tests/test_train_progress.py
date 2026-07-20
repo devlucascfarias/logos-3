@@ -129,3 +129,97 @@ def test_continuation_arguments_are_supported(monkeypatch):
     assert args.stage == "pilot_continuation"
     assert args.data_stage == "pilot"
     assert args.adapter_path == "/tmp/adapter"
+
+
+def test_corrective_optimizer_step_preflight_accepts_expected_range(tmp_path):
+    report_path = tmp_path / "dataset_report.json"
+    report_path.write_text(
+        json.dumps({"split": {"train_tokens": 304_000}}),
+        encoding="utf-8",
+    )
+    estimate = train_sft._optimizer_step_preflight(
+        report_path,
+        {
+            "max_seq_length": 2048,
+            "per_device_train_batch_size": 1,
+            "gradient_accumulation_steps": 8,
+            "num_train_epochs": 1,
+            "min_optimizer_steps": 15,
+            "max_optimizer_steps": 25,
+        },
+    )
+    assert estimate["packed_sequences"] == 149
+    assert estimate["optimizer_steps"] == 19
+
+
+def test_corrective_optimizer_step_preflight_rejects_outside_range(tmp_path):
+    report_path = tmp_path / "dataset_report.json"
+    report_path.write_text(
+        json.dumps({"split": {"train_tokens": 100_000}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="abaixo do mínimo"):
+        train_sft._optimizer_step_preflight(
+            report_path,
+            {
+                "max_seq_length": 2048,
+                "per_device_train_batch_size": 1,
+                "gradient_accumulation_steps": 8,
+                "num_train_epochs": 1,
+                "min_optimizer_steps": 15,
+                "max_optimizer_steps": 25,
+            },
+        )
+
+
+def test_corrective_arguments_are_supported(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train_sft.py",
+            "--stage",
+            "corrective_v1",
+            "--adapter-path",
+            "/tmp/champion",
+            "--resume-from-checkpoint",
+            "none",
+        ],
+    )
+    args = train_sft.parse_args()
+    assert args.stage == "corrective_v1"
+    assert args.adapter_path == "/tmp/champion"
+    assert args.resume_from_checkpoint == "none"
+
+
+def test_manifest_records_initial_adapter_manifest_hash(tmp_path):
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    for name, content in (
+        ("adapter_config.json", "{}"),
+        ("adapter_model.safetensors", "weights"),
+        ("run_manifest.json", "{}"),
+    ):
+        (adapter / name).write_text(content, encoding="utf-8")
+    train_file = tmp_path / "train.jsonl"
+    train_file.write_text("{}\n", encoding="utf-8")
+    torch = SimpleNamespace(
+        cuda=SimpleNamespace(
+            get_device_name=lambda _: "GPU",
+            is_bf16_supported=lambda: True,
+            get_device_properties=lambda _: SimpleNamespace(total_memory=1),
+        )
+    )
+    manifest = train_sft._manifest(
+        config_path="config.yaml",
+        stage="corrective_v1",
+        data_stage="corrective_v1",
+        train_file=train_file,
+        validation_file=tmp_path / "validation.jsonl",
+        adapter_path=adapter,
+        training={},
+        torch=torch,
+    )
+    assert manifest["source_adapter"]["run_manifest_sha256"] == hashlib.sha256(
+        (adapter / "run_manifest.json").read_bytes()
+    ).hexdigest()

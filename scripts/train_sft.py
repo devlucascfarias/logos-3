@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import platform
 import subprocess
 import sys
@@ -23,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--stage",
         choices=(
+            "corrective_v1",
             "pilot",
             "pilot_continuation",
             "baseline",
@@ -130,6 +132,103 @@ def _verify_source_data(
             )
 
 
+def _estimate_optimizer_steps(
+    *,
+    train_tokens: int,
+    max_seq_length: int,
+    per_device_train_batch_size: int,
+    gradient_accumulation_steps: int,
+    num_train_epochs: float,
+) -> dict[str, int | float]:
+    if train_tokens <= 0:
+        raise ValueError("train_tokens deve ser positivo.")
+    if max_seq_length <= 0:
+        raise ValueError("max_seq_length deve ser positivo.")
+    if per_device_train_batch_size <= 0 or gradient_accumulation_steps <= 0:
+        raise ValueError("Batch e acumulação devem ser positivos.")
+    if num_train_epochs <= 0:
+        raise ValueError("num_train_epochs deve ser positivo.")
+    packed_sequences = math.ceil(train_tokens / max_seq_length)
+    effective_batch = (
+        per_device_train_batch_size * gradient_accumulation_steps
+    )
+    optimizer_steps = math.ceil(
+        packed_sequences * num_train_epochs / effective_batch
+    )
+    return {
+        "train_tokens": train_tokens,
+        "packed_sequences": packed_sequences,
+        "effective_batch_sequences": effective_batch,
+        "num_train_epochs": num_train_epochs,
+        "optimizer_steps": optimizer_steps,
+    }
+
+
+def _optimizer_step_preflight(
+    report_path: Path,
+    training: dict[str, Any],
+    *,
+    train_file: Path | None = None,
+) -> dict[str, int | float]:
+    if not report_path.exists():
+        raise SystemExit(f"Relatório de dados ausente: {report_path}")
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        train_tokens = int(report["split"]["train_tokens"])
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        raise SystemExit(f"Relatório de dados inválido: {report_path}") from exc
+    if train_file is not None:
+        actual_tokens = 0
+        line_number = 0
+        try:
+            with train_file.open("r", encoding="utf-8") as handle:
+                for line_number, line in enumerate(handle, start=1):
+                    if not line.strip():
+                        continue
+                    row = json.loads(line)
+                    actual_tokens += int(row["num_tokens"])
+        except (
+            OSError,
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise SystemExit(
+                f"Dados de treino inválidos em {train_file}:{line_number}"
+            ) from exc
+        if actual_tokens != train_tokens:
+            raise SystemExit(
+                "A contagem de tokens do treino não corresponde ao relatório "
+                f"({actual_tokens} != {train_tokens})."
+            )
+    estimate = _estimate_optimizer_steps(
+        train_tokens=train_tokens,
+        max_seq_length=int(training["max_seq_length"]),
+        per_device_train_batch_size=int(
+            training["per_device_train_batch_size"]
+        ),
+        gradient_accumulation_steps=int(
+            training["gradient_accumulation_steps"]
+        ),
+        num_train_epochs=float(training["num_train_epochs"]),
+    )
+    minimum = training.get("min_optimizer_steps")
+    maximum = training.get("max_optimizer_steps")
+    steps = int(estimate["optimizer_steps"])
+    if minimum is not None and steps < int(minimum):
+        raise SystemExit(
+            f"Preflight recusou o treino: estimativa de {steps} passos abaixo "
+            f"do mínimo {minimum}."
+        )
+    if maximum is not None and steps > int(maximum):
+        raise SystemExit(
+            f"Preflight recusou o treino: estimativa de {steps} passos acima "
+            f"do máximo {maximum}."
+        )
+    return estimate
+
+
 def _make_progress_callback(base_class: type, stage: str):
     class TrainingProgressCallback(base_class):
         def __init__(self) -> None:
@@ -223,6 +322,18 @@ def _manifest(
     training: dict[str, Any],
     torch: Any,
 ) -> dict[str, Any]:
+    dataset_report_path = train_file.parent / "dataset_report.json"
+    candidate_manifest = None
+    if dataset_report_path.exists():
+        try:
+            dataset_report = json.loads(
+                dataset_report_path.read_text(encoding="utf-8")
+            )
+            candidate_manifest = dataset_report.get("collection", {}).get(
+                "candidate_manifest"
+            )
+        except (OSError, json.JSONDecodeError):
+            candidate_manifest = None
     return {
         "config": config_path,
         "stage": stage,
@@ -248,6 +359,7 @@ def _manifest(
                 if (train_file.parent / "dataset_report.json").exists()
                 else None
             ),
+            "candidate_manifest": candidate_manifest,
         },
         "source_adapter": (
             {
@@ -257,6 +369,11 @@ def _manifest(
                 ),
                 "model_sha256": file_sha256(
                     adapter_path / "adapter_model.safetensors"
+                ),
+                "run_manifest_sha256": (
+                    file_sha256(adapter_path / "run_manifest.json")
+                    if (adapter_path / "run_manifest.json").exists()
+                    else None
                 ),
             }
             if adapter_path is not None
@@ -281,7 +398,26 @@ def main() -> None:
     validation_file = Path(f"data/processed/{data_stage}/validation.jsonl")
     output_dir = str(training["output_dir"])
 
+    if args.stage == "corrective_v1" and args.max_steps is not None:
+        raise SystemExit(
+            "corrective_v1 não aceita --max-steps; preserve uma época completa."
+        )
+    if args.stage == "corrective_v1" and args.max_train_samples is not None:
+        raise SystemExit(
+            "corrective_v1 não aceita --max-train-samples; use o corpus assinado."
+        )
+
     if args.dry_run:
+        report_path = train_file.parent / "dataset_report.json"
+        estimate = (
+            _optimizer_step_preflight(
+                report_path,
+                training,
+                train_file=train_file if train_file.exists() else None,
+            )
+            if report_path.exists()
+            else None
+        )
         print(
             json.dumps(
                 {
@@ -296,6 +432,7 @@ def main() -> None:
                     "resume": _resolve_resume(
                         args.resume_from_checkpoint, output_dir
                     ),
+                    "optimizer_step_estimate": estimate,
                     "training": training,
                 },
                 ensure_ascii=False,
@@ -310,6 +447,14 @@ def main() -> None:
         raise SystemExit(
             f"A etapa {args.stage} exige um adapter inicial. Use "
             "--adapter-path ou defina training.adapter_path na configuração."
+        )
+    if (
+        args.stage == "corrective_v1"
+        and adapter_path is not None
+        and not (adapter_path / "run_manifest.json").exists()
+    ):
+        raise SystemExit(
+            "corrective_v1 exige run_manifest.json no adapter campeão inicial."
         )
     if adapter_path:
         if not (adapter_path / "adapter_config.json").exists() or not (
@@ -331,6 +476,19 @@ def main() -> None:
         )
     if adapter_path and training.get("verify_source_data"):
         _verify_source_data(adapter_path, train_file, validation_file)
+    optimizer_step_estimate = _optimizer_step_preflight(
+        train_file.parent / "dataset_report.json",
+        training,
+        train_file=train_file,
+    )
+    training["optimizer_step_estimate"] = optimizer_step_estimate
+    print(
+        "Preflight: "
+        f"{optimizer_step_estimate['train_tokens']:,} tokens, "
+        f"{optimizer_step_estimate['packed_sequences']:,} sequências, "
+        f"{optimizer_step_estimate['optimizer_steps']:,} passos estimados.",
+        flush=True,
+    )
 
     try:
         import torch

@@ -511,7 +511,31 @@ def build_candidates(
     if source.get("require_patch") and not _has_patch(row, messages):
         return [], "missing_patch"
 
-    verified = _row_success(row) or bool(source.get("trusted_curated", False))
+    curated = bool(source.get("curated", False))
+    row_evidence = row.get("verification_evidence")
+    verification_level = row.get("verification_level") or source.get(
+        "verification_level"
+    )
+    verified = bool(
+        isinstance(row_evidence, dict)
+        and row_evidence.get("status") == "passed"
+        and row_evidence.get("sha256")
+        and verification_level
+    )
+    if _row_success(row):
+        # Source-reported success is still recorded per line, but is not
+        # confused with the stronger locally executed corrective levels.
+        verified = True
+        verification_level = verification_level or "source_reported_success"
+        if not isinstance(row_evidence, dict):
+            row_evidence = {
+                "status": "passed",
+                "sha256": _stable_hash(
+                    source_name,
+                    source_id,
+                    json.dumps(row, ensure_ascii=False, sort_keys=True, default=str),
+                ),
+            }
     if successful_only and not verified:
         return [], "not_verified"
 
@@ -570,6 +594,9 @@ def build_candidates(
                 "category": category,
                 "reasoning_band": reasoning_band(segment, text_token_counter),
                 "verified": verified,
+                "curated": curated,
+                "verification_level": verification_level,
+                "verification_evidence": row_evidence,
                 "num_tokens": num_tokens,
                 "fingerprint": fingerprint,
                 "near_fingerprint": _near_fingerprint(segment),
@@ -997,6 +1024,19 @@ def training_row(example: dict[str, Any]) -> dict[str, Any]:
         "verified": example["verified"],
         "num_tokens": example["num_tokens"],
     }
+    for key in (
+        "curated",
+        "license",
+        "revision_sha256",
+        "source_id",
+        "source_revision",
+        "source_sha256",
+        "template_id",
+        "verification_level",
+        "verification_evidence",
+    ):
+        if example.get(key) is not None:
+            row[key] = example[key]
     if "source_config" in example:
         row["source_config"] = example["source_config"]
     if "source_split" in example:

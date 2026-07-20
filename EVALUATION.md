@@ -1,8 +1,10 @@
 # Protocolo de avaliação
 
 Compare `Qwen/Qwen3-8B` e cada checkpoint com o mesmo prompt, modo de thinking,
-seed, limites de geração e conjunto descontaminado. Execute código gerado em um
-container/VM sem credenciais nem acesso ao host.
+seed, limites de geração e conjunto descontaminado. Benchmarks gerais continuam
+em container/VM sem credenciais. O `corrective_v1` usa um executor Colab
+específico, fail-closed, com processo isolado e limites de AST, CPU, memória,
+tempo e saída descritos abaixo.
 
 O gerador aceita tarefas JSONL com `id`, `prompt` (ou `messages`), `category` e,
 opcionalmente, `tools`:
@@ -109,3 +111,79 @@ python scripts/compare_adapter.py \
 A continuação só substitui o piloto preservado depois da avaliação cega. Os
 rótulos A/B/C são embaralhados separadamente por prompt; agregue as notas por
 identidade somente após abrir `mapping.json`.
+
+## Gate `corrective_v1`
+
+A geração corretiva é fixa: modo direto, greedy, `max_new_tokens=512`, mesma
+revisão do modelo e mesmo chat template. O modo é ativado com
+`--decoding deterministic`; alterar thinking ou o limite de tokens nesse modo é
+erro.
+
+Primeiro gere previsões para todos os checkpoints no `dev_v1`:
+
+```bash
+python scripts/generate_evaluation.py \
+  --tasks data/interim/corrective_v1/dev_v1.jsonl \
+  --adapter outputs/checkpoints/corrective_v1/checkpoint-2 \
+  --output outputs/evaluations/corrective_v1/checkpoint-2-dev.jsonl \
+  --decoding deterministic \
+  --seed 20260722
+
+python scripts/evaluate_contracts.py \
+  --tasks data/interim/corrective_v1/dev_v1.jsonl \
+  --predictions outputs/evaluations/corrective_v1/*-dev.jsonl \
+  --output outputs/evaluations/corrective_v1/dev_report.json
+```
+
+O ranking desempata por tarefas funcionais aprovadas, fração de contratos,
+formato, menos timeout/truncamento e, por último, menor `eval_loss`. Somente os
+três primeiros seguem para as 33 tarefas de `corrective_hidden_v1`, junto do
+modelo-base e do campeão preservado.
+
+O executor exige exatamente um bloco Python e uma explicação não vazia. A AST
+proíbe imports, classes, dunders, arquivos, rede, processos, reflexão, `eval`,
+`exec`, `compile` e `open`. Cada resposta roda em processo novo com
+`python -I -S`, diretório temporário, 256 MiB, CPU de 2 segundos, timeout total
+de 3 segundos e saída máxima de 64 KiB. Em ambiente não POSIX ou se qualquer
+limite de isolamento falhar, a amostra é reprovada; não existe fallback
+permissivo.
+
+Depois do hidden, faça a comparação cega manual apenas para o melhor finalista:
+
+```bash
+python scripts/compare_adapter.py \
+  --stage corrective_v1 \
+  --adapter-path outputs/checkpoints/corrective_v1/checkpoint-N \
+  --reference-adapter-path /content/pilot_500k_step7/adapter \
+  --output-dir outputs/evaluations/corrective_v1/regression \
+  --max-new-tokens 512 \
+  --seed 20260722 \
+  --no-thinking
+```
+
+Preencha `ratings.json` antes de abrir `mapping.json`. O gate final exige:
+
+- corpus com pelo menos 304 mil tokens e desvio máximo de 5% por bucket;
+- 100% das linhas novas verificadas, sem overlap ou contaminação;
+- candidato pelo menos três tarefas acima do campeão no hidden;
+- nenhum recuo em formato ou contratos e perda máxima de uma tarefa por família;
+- regressão cega com total mínimo 84/195, correção 37, instruções 29 e
+  explicação 17, além de superar o modelo-base.
+
+O script combina os dois relatórios e registra os hashes usados:
+
+```bash
+python scripts/evaluate_contracts.py \
+  --tasks data/interim/corrective_v1/corrective_hidden_v1.jsonl \
+  --predictions outputs/evaluations/corrective_v1/*-hidden.jsonl \
+  --output outputs/evaluations/corrective_v1/hidden_report.json \
+  --promotion-output outputs/evaluations/corrective_v1/promotion_gate.json \
+  --ratings outputs/evaluations/corrective_v1/regression/ratings.json \
+  --mapping outputs/evaluations/corrective_v1/regression/mapping.json \
+  --candidate outputs/checkpoints/corrective_v1/checkpoint-N \
+  --champion /content/pilot_500k_step7/adapter \
+  --base Qwen/Qwen3-8B
+```
+
+Se qualquer condição falhar, o resultado é `MANTER CAMPEAO` e
+`pilot_500k_step7` permanece inalterado.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -20,9 +21,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adapter", help="Adapter PEFT; omita para avaliar o base.")
     parser.add_argument("--output", required=True)
     parser.add_argument(
-        "--mode", choices=("thinking", "direct"), default="thinking"
+        "--mode",
+        choices=("thinking", "direct"),
+        help="Padrao: thinking no benchmark e direct na decodificacao deterministica.",
     )
-    parser.add_argument("--max-new-tokens", type=int, default=2048)
+    parser.add_argument(
+        "--decoding",
+        choices=("benchmark", "deterministic"),
+        default="benchmark",
+        help="deterministic usa greedy e, por padrao, no maximo 512 tokens.",
+    )
+    parser.add_argument("--max-new-tokens", type=int)
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -42,11 +51,46 @@ def _task_messages(task: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
+def _resolve_generation_args(args: argparse.Namespace) -> tuple[str, int, dict[str, Any]]:
+    deterministic = args.decoding == "deterministic"
+    mode = args.mode or ("direct" if deterministic else "thinking")
+    max_new_tokens = args.max_new_tokens
+    if max_new_tokens is None:
+        max_new_tokens = 512 if deterministic else 2048
+    if max_new_tokens <= 0:
+        raise ValueError("--max-new-tokens deve ser positivo.")
+    if deterministic and mode != "direct":
+        raise ValueError("--decoding deterministic requer --mode direct.")
+    if deterministic and max_new_tokens != 512:
+        raise ValueError(
+            "--decoding deterministic requer --max-new-tokens 512."
+        )
+    if deterministic:
+        generation: dict[str, Any] = {
+            "do_sample": False,
+            "num_beams": 1,
+            "use_cache": True,
+            "max_new_tokens": max_new_tokens,
+        }
+    else:
+        thinking = mode == "thinking"
+        generation = {
+            "do_sample": True,
+            "temperature": 0.6 if thinking else 0.7,
+            "top_p": 0.95 if thinking else 0.8,
+            "top_k": 20,
+            "max_new_tokens": max_new_tokens,
+        }
+    return mode, max_new_tokens, generation
+
+
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    if args.max_new_tokens <= 0:
-        raise SystemExit("--max-new-tokens deve ser positivo.")
+    try:
+        mode, max_new_tokens, generation = _resolve_generation_args(args)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     try:
         import torch
         from peft import PeftModel
@@ -83,16 +127,13 @@ def main() -> None:
         model = PeftModel.from_pretrained(model, args.adapter)
     model.eval()
 
-    thinking = args.mode == "thinking"
-    generation = {
-        "do_sample": True,
-        "temperature": 0.6 if thinking else 0.7,
-        "top_p": 0.95 if thinking else 0.8,
-        "top_k": 20,
-        "max_new_tokens": args.max_new_tokens,
-        "pad_token_id": tokenizer.eos_token_id,
-        "eos_token_id": tokenizer.eos_token_id,
-    }
+    thinking = mode == "thinking"
+    generation.update(
+        {
+            "pad_token_id": tokenizer.eos_token_id,
+            "eos_token_id": tokenizer.eos_token_id,
+        }
+    )
     tasks = list(read_jsonl(args.tasks))
     target = Path(args.output)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -120,13 +161,26 @@ def main() -> None:
             response = tokenizer.decode(
                 output_ids[0, input_length:], skip_special_tokens=True
             ).strip()
+            generated_ids = output_ids[0, input_length:]
+            generated_tokens = int(generated_ids.shape[-1])
+            ended_with_eos = bool(
+                generated_tokens
+                and tokenizer.eos_token_id is not None
+                and int(generated_ids[-1].item()) == int(tokenizer.eos_token_id)
+            )
             result = {
                 "id": task.get("id", index),
                 "checkpoint": checkpoint,
-                "mode": args.mode,
+                "mode": mode,
+                "decoding": args.decoding,
                 "category": task.get("category"),
+                "family": task.get("family"),
                 "response": response,
                 "generation": generation,
+                "generated_tokens": generated_tokens,
+                "ended_with_eos": ended_with_eos,
+                "truncated": generated_tokens >= max_new_tokens and not ended_with_eos,
+                "response_sha256": hashlib.sha256(response.encode("utf-8")).hexdigest(),
             }
             handle.write(json.dumps(result, ensure_ascii=False) + "\n")
             print(f"[{index + 1}/{len(tasks)}] {result['id']}")

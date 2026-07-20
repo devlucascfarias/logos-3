@@ -19,16 +19,20 @@ O fluxo entregue cobre:
   e limite explícito para raciocínios longos;
 - QLoRA rank 32 sobre atenção e MLP, batch efetivo 16;
 - retomada automática e continuação agentic a partir de um adapter escolhido;
+- rodada corretiva fail-closed com corpus assinado, executor restrito e gates
+  funcionais por checkpoint;
 - seleção do checkpoint pela fórmula da receita.
 
 ## Caminho mais curto: Colab
 
 Abra e execute
 [`notebooks/qwen3_8b_l4_sft_colab.ipynb`](notebooks/qwen3_8b_l4_sft_colab.ipynb).
-O notebook está configurado para `pilot_continuation`: parte do piloto de 500k
-preservado no Drive, reutiliza os mesmos dados verificados por SHA-256 e executa
-uma época adicional com learning rate `2e-5`. O piloto original não é retomado
-nem sobrescrito; checkpoints e adapter usam diretórios próprios.
+O notebook está configurado para `corrective_v1`. Ele copia o campeão de 500k
+do Drive, verifica seus hashes, desmonta o Drive, constrói um corpus corretivo
+assinado de 320 mil tokens e treina uma época com learning rate `1e-5`. O
+campeão original nunca é sobrescrito. Ao final, o notebook ranqueia todos os
+checkpoints em `dev_v1`, avalia os três finalistas no hidden de 33 tarefas e
+gera a comparação cega dos 13 prompts de regressão.
 
 Crie um secret `HF_TOKEN` no Colab. Se o repositório não for público, crie
 também `GH_TOKEN` com permissão somente de leitura.
@@ -53,6 +57,27 @@ python scripts/train_sft.py \
   --stage pilot \
   --resume-from-checkpoint none
 ```
+
+Para a rodada corretiva, primeiro copie
+`pilot_500k_step7/{adapter,data}` do Drive para um diretório local e então rode:
+
+```bash
+python scripts/build_corrective_corpus.py \
+  --pilot-run-path /content/pilot_500k_step7 \
+  --output-dir data/interim/corrective_v1
+python scripts/prepare_data.py \
+  --stage corrective_v1 \
+  --candidates-jsonl data/interim/corrective_v1/candidates.jsonl \
+  --candidate-manifest data/interim/corrective_v1/candidate_manifest.json
+python scripts/train_sft.py \
+  --stage corrective_v1 \
+  --adapter-path /content/pilot_500k_step7/adapter \
+  --resume-from-checkpoint none
+```
+
+Não use `--skip-execution` para materializar dados de treino. Essa opção existe
+somente para testes do builder e produz um manifesto recusado por
+`prepare_data.py`.
 
 Somente depois de o piloto superar o modelo-base e o adapter campeão, execute
 as etapas maiores:
@@ -85,6 +110,13 @@ Cada linha final tem `messages` e metadados de auditoria:
   "category": "verified_code",
   "reasoning_band": "short",
   "verified": true,
+  "verification_level": "local_hidden_tests",
+  "verification_evidence": {
+    "status": "passed",
+    "code_sha256": "...",
+    "tests_sha256": "...",
+    "sha256": "..."
+  },
   "num_tokens": 1734
 }
 ```
@@ -135,6 +167,13 @@ se os hashes de `train.jsonl`, `validation.jsonl` ou `dataset_report.json`
 divergirem. As saídas ficam em `outputs/checkpoints/pilot_continuation` e
 `outputs/adapters/pilot_continuation`.
 
+O `corrective_v1` parte do adapter campeão, mas usa dados novos. Seu mix é
+`50/35/15` por tokens entre microcontratos próprios, OpenCodeInstruct verificado
+e replay do campeão. O stage usa sequências de 2048, batch físico 1, acumulação
+8 e bloqueia o treino se a estimativa estiver fora de 15–25 atualizações. A
+primeira execução deve usar `--resume-from-checkpoint none`; use `auto` apenas
+para recuperar uma interrupção.
+
 O packing usa a estratégia `wrapped` porque o `bfd` atual ativa
 `padding_free`, que depende de FlashAttention. Isso mantém a instalação da L4
 mais previsível sem desativar packing.
@@ -145,22 +184,37 @@ avaliação com `--no-eval`.
 
 ## Avaliação e checkpoint
 
-Para a avaliação comportamental, compare cegamente o modelo-base, o candidato
-de 500k e o adapter campeão de 250k nos mesmos 13 prompts inéditos:
+Para a rodada corretiva, gere respostas determinísticas de cada checkpoint no
+`dev_v1` e execute os testes ocultos:
+
+```bash
+python scripts/generate_evaluation.py \
+  --tasks data/interim/corrective_v1/dev_v1.jsonl \
+  --adapter outputs/checkpoints/corrective_v1/checkpoint-2 \
+  --output outputs/evaluations/corrective_v1/checkpoint-2-dev.jsonl \
+  --decoding deterministic
+python scripts/evaluate_contracts.py \
+  --tasks data/interim/corrective_v1/dev_v1.jsonl \
+  --predictions outputs/evaluations/corrective_v1/*-dev.jsonl \
+  --output outputs/evaluations/corrective_v1/dev_report.json
+```
+
+Depois, compare cegamente base, melhor finalista e campeão nos mesmos 13
+prompts de regressão:
 
 ```bash
 python scripts/compare_adapter.py \
-  --stage pilot \
-  --adapter-path outputs/adapters/pilot \
-  --reference-adapter-path /caminho/para/o/adapter-campeao \
-  --output-dir outputs/evaluations/pilot_500k \
+  --stage corrective_v1 \
+  --adapter-path outputs/checkpoints/corrective_v1/checkpoint-N \
+  --reference-adapter-path /content/pilot_500k_step7/adapter \
+  --output-dir outputs/evaluations/corrective_v1/regression \
   --seed 20260722
 ```
 
-Avalie `outputs/evaluations/pilot_500k/comparison.md` antes de consultar
+Avalie `outputs/evaluations/corrective_v1/regression/comparison.md` antes de consultar
 `mapping.json`. Promova o candidato somente se ele superar o campeão em
-correção e cumprimento das instruções sem aumentar repetição, truncamento ou
-overthinking; `eval_loss` isoladamente não decide a promoção.
+ao menos três tarefas no hidden, não regredir contratos/formato e passar os
+limites da regressão cega; `eval_loss` é apenas o último desempate.
 
 Avalie o base e todos os checkpoints no mesmo conjunto descontaminado. O
 pipeline deixa a execução de código gerado para um container/VM separado:
