@@ -4,6 +4,7 @@ import argparse
 import json
 import platform
 import subprocess
+import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,72 @@ def _resolve_resume(value: str, output_dir: str) -> str | None:
     except ImportError:
         return None
     return get_last_checkpoint(output_dir)
+
+
+def _make_progress_callback(base_class: type, stage: str):
+    class TrainingProgressCallback(base_class):
+        def __init__(self) -> None:
+            self.progress = None
+
+        def on_train_begin(self, args, state, control, **kwargs):
+            if not state.is_world_process_zero:
+                return
+            from tqdm import tqdm
+
+            total = max(int(state.max_steps), 1)
+            initial = min(int(state.global_step), total)
+            self.progress = tqdm(
+                total=total,
+                initial=initial,
+                desc=f"Treino {stage}",
+                unit="step",
+                dynamic_ncols=True,
+                mininterval=0.5,
+                smoothing=0.1,
+                file=sys.stdout,
+                bar_format=(
+                    "{l_bar}{bar}| {n_fmt}/{total_fmt} "
+                    "[{elapsed}<{remaining}, {rate_fmt}{postfix}]"
+                ),
+            )
+            print(
+                f"Progresso: {initial}/{total} passos. "
+                "O ETA aparece após os primeiros passos.",
+                flush=True,
+            )
+
+        def on_step_end(self, args, state, control, **kwargs):
+            if self.progress is None:
+                return
+            delta = int(state.global_step) - int(self.progress.n)
+            if delta > 0:
+                self.progress.update(delta)
+
+        def on_log(self, args, state, control, logs=None, **kwargs):
+            if self.progress is None or not logs:
+                return
+            values = {}
+            for key, label in (
+                ("loss", "loss"),
+                ("eval_loss", "eval"),
+                ("learning_rate", "lr"),
+                ("grad_norm", "grad"),
+            ):
+                value = logs.get(key)
+                if isinstance(value, (int, float)):
+                    values[label] = f"{value:.4g}"
+            if values:
+                self.progress.set_postfix(values, refresh=True)
+
+        def on_train_end(self, args, state, control, **kwargs):
+            if self.progress is None:
+                return
+            delta = int(state.global_step) - int(self.progress.n)
+            if delta > 0:
+                self.progress.update(delta)
+            self.progress.close()
+
+    return TrainingProgressCallback()
 
 
 def _manifest(
@@ -152,6 +219,7 @@ def main() -> None:
         from datasets import load_dataset
         from peft import LoraConfig, PeftModel, prepare_model_for_kbit_training
         from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+        from transformers.trainer_callback import PrinterCallback, TrainerCallback
         from trl import SFTConfig, SFTTrainer
     except ImportError as exc:
         raise SystemExit(
@@ -168,6 +236,7 @@ def main() -> None:
     if "L4" not in gpu_name.upper():
         print("AVISO: a receita foi dimensionada e validada para uma NVIDIA L4.")
 
+    print("[1/4] Carregando tokenizer e dados...", flush=True)
     torch.backends.cuda.matmul.allow_tf32 = bool(training.get("tf32", True))
     quantization = BitsAndBytesConfig(
         load_in_4bit=bool(training.get("load_in_4bit", True)),
@@ -199,7 +268,17 @@ def main() -> None:
     if args.max_train_samples:
         size = min(args.max_train_samples, len(dataset["train"]))
         dataset["train"] = dataset["train"].select(range(size))
+    print(
+        f"[2/4] Dados prontos: {len(dataset['train']):,} exemplos de treino"
+        + (
+            f" e {len(dataset['validation']):,} de validação."
+            if use_eval
+            else "."
+        ),
+        flush=True,
+    )
 
+    print("[3/4] Carregando modelo 4-bit e configurando LoRA...", flush=True)
     adapter_path = training.get("adapter_path")
     peft_config = None
     model: str | Any = config["model_name"]
@@ -285,6 +364,7 @@ def main() -> None:
         "dataset_num_proc": 2,
         "remove_unused_columns": True,
         "include_num_input_tokens_seen": True,
+        "disable_tqdm": True,
     }
     if isinstance(model, str):
         sft_kwargs["model_init_kwargs"] = {
@@ -320,15 +400,18 @@ def main() -> None:
         "train_dataset": dataset["train"],
         "eval_dataset": dataset.get("validation") if use_eval else None,
         "processing_class": tokenizer,
+        "callbacks": [_make_progress_callback(TrainerCallback, args.stage)],
     }
     if peft_config is not None:
         trainer_kwargs["peft_config"] = peft_config
     if trainer_quantization is not None:
         trainer_kwargs["quantization_config"] = trainer_quantization
     trainer = SFTTrainer(**trainer_kwargs)
+    trainer.remove_callback(PrinterCallback)
 
     resume = _resolve_resume(args.resume_from_checkpoint, output_dir)
     print(f"Retomada: {resume or 'não'}")
+    print("[4/4] Treinamento iniciado.", flush=True)
     result = trainer.train(resume_from_checkpoint=resume)
     metrics = dict(result.metrics)
     metrics["peak_vram_bytes"] = torch.cuda.max_memory_allocated()
