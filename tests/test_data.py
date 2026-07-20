@@ -15,6 +15,12 @@ DATA_CONFIG = {
     "max_tool_output_chars": 100,
     "max_tool_messages": 8,
     "max_repeated_message_run": 2,
+    "repeated_line_min_chars": 12,
+    "max_repeated_line_occurrences": 3,
+    "repeated_ngram_size": 8,
+    "max_repeated_ngram_occurrences": 6,
+    "reject_unclosed_blocks": True,
+    "max_assistant_chars": 20_000,
     "min_tokens": 3,
     "blocked_benchmark_markers": ["humaneval"],
 }
@@ -115,6 +121,70 @@ def test_rejects_secrets_and_benchmark_contamination():
     assert reason == "benchmark_marker"
 
 
+def test_rejects_repetition_and_unclosed_blocks():
+    source = {
+        "name": "test/source",
+        "category": "verified_code",
+        "trusted_curated": True,
+    }
+    repeated, reason = build_candidates(
+        {
+            "input": "Explique.",
+            "output": "\n".join(["esta linha se repete"] * 4),
+        },
+        row_index=0,
+        source=source,
+        system_prompt=SYSTEM,
+        data_config=DATA_CONFIG,
+        token_counter=count_messages,
+        text_token_counter=count_text,
+    )
+    assert repeated == []
+    assert reason == "repeated_lines"
+
+    unclosed, reason = build_candidates(
+        {"input": "Corrija.", "output": "```python\nprint('x')"},
+        row_index=1,
+        source=source,
+        system_prompt=SYSTEM,
+        data_config=DATA_CONFIG,
+        token_counter=count_messages,
+        text_token_counter=count_text,
+    )
+    assert unclosed == []
+    assert reason == "unclosed_block"
+
+
+def test_can_deterministically_convert_reasoning_to_direct_answer():
+    source = {
+        "name": "test/source",
+        "category": "verified_code",
+        "trusted_curated": True,
+    }
+    data_config = {
+        **DATA_CONFIG,
+        "direct_conversion_fraction_by_category": {"verified_code": 1.0},
+    }
+
+    candidates, reason = build_candidates(
+        {
+            "id": "reasoning-example",
+            "input": "Resolva.",
+            "output": "<think>raciocínio interno</think>\nResposta final.",
+        },
+        row_index=0,
+        source=source,
+        system_prompt=SYSTEM,
+        data_config=data_config,
+        token_counter=count_messages,
+        text_token_counter=count_text,
+    )
+
+    assert reason is None
+    assert candidates[0]["reasoning_band"] == "direct"
+    assert "<think>" not in candidates[0]["messages"][-1]["content"]
+
+
 def test_semantic_segmentation_keeps_assistant_targets():
     messages = [
         {"role": "system", "content": "s"},
@@ -168,7 +238,10 @@ def test_mix_is_by_tokens_and_group_split_has_no_overlap():
         token_counts[example["category"]] += example["num_tokens"]
     assert token_counts["verified_code"] == 12_000
     assert token_counts["reasoning"] == 8_000
+    assert report["max_category_deviation"] <= 0.01
     assert report["max_reasoning_deviation"] <= 0.01
+    assert report["candidate_matrix"]["verified_code"]["short"]["examples"] == 70
+    assert report["selected_matrix"]["reasoning"]["direct"]["tokens"] >= 0
 
     train, validation = split_by_group(
         selected, validation_fraction=0.2, seed=42
@@ -200,6 +273,44 @@ def test_mix_does_not_fill_a_shortage_with_an_overrepresented_band():
         for item in selected
         if item["reasoning_band"] == "long"
     ) == 500
+
+
+def test_mix_solves_crossed_category_and_reasoning_constraints():
+    examples = [
+        *[
+            _example("first", "shared", index)
+            for index in range(10)
+        ],
+        *[
+            _example("first", "first_only", index)
+            for index in range(10)
+        ],
+        *[
+            _example("second", "shared", index)
+            for index in range(10)
+        ],
+        *[
+            _example("second", "second_only", index)
+            for index in range(10)
+        ],
+    ]
+    selected, report = mix_by_tokens(
+        examples,
+        token_budget=2_000,
+        category_weights={"first": 0.5, "second": 0.5},
+        reasoning_weights={
+            "shared": 0.5,
+            "first_only": 0.25,
+            "second_only": 0.25,
+        },
+        seed=42,
+    )
+
+    assert sum(example["num_tokens"] for example in selected) == 2_000
+    assert report["matrix_feasible"]
+    assert report["maximum_feasible_tokens"] == 2_000
+    assert report["max_category_deviation"] == 0
+    assert report["max_reasoning_deviation"] == 0
 
 
 def test_group_split_honors_minimum_validation_size():
@@ -234,3 +345,36 @@ def test_duplicate_fingerprints_are_removed_before_mixing():
     )
     assert len(selected) == 1
     assert report["available_unique_examples"] == 1
+
+
+def test_near_duplicates_and_group_concentration_are_limited():
+    first = {
+        **_example("verified_code", "direct", 1),
+        "near_fingerprint": "near-same",
+    }
+    near_duplicate = {
+        **_example("verified_code", "direct", 2),
+        "near_fingerprint": "near-same",
+    }
+    same_group = [
+        {
+            **_example("verified_code", "direct", index),
+            "group_id": "shared-group",
+        }
+        for index in range(3, 8)
+    ]
+    selected, report = mix_by_tokens(
+        [first, near_duplicate, *same_group],
+        token_budget=300,
+        category_weights={"verified_code": 1.0},
+        reasoning_weights={"direct": 1.0},
+        seed=1,
+        max_examples_per_group=2,
+    )
+
+    assert len(selected) == 3
+    assert sum(
+        example["group_id"] == "shared-group" for example in selected
+    ) == 2
+    assert report["available_unique_examples"] == 3
+    assert report["available_unique_groups"] == 2

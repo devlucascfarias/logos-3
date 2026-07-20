@@ -75,3 +75,21 @@ O seletor aplica:
 ```
 
 Não escolha automaticamente o último checkpoint.
+
+## Gate do piloto
+
+O piloto de 500k deve ser comparado cegamente com o modelo-base e com o adapter
+campeão de 250k:
+
+```bash
+python scripts/compare_adapter.py \
+  --stage pilot \
+  --reference-adapter-path /caminho/para/o/adapter-campeao \
+  --output-dir outputs/evaluations/pilot_500k \
+  --seed 20260722
+```
+
+Preencha `comparison.md`/`ratings.json` antes de abrir `mapping.json`. O piloto
+só substitui o campeão se ganhar em correção e cumprimento das instruções sem
+regredir repetição, truncamento ou overthinking. Se nenhum checkpoint passar
+esse gate, mantenha o campeão e revise os dados; não promova pelo `eval_loss`.

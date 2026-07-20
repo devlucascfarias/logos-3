@@ -250,6 +250,73 @@ def _max_identical_run(messages: Sequence[dict[str, str]]) -> int:
     return best
 
 
+def _assistant_quality_rejection(
+    messages: Sequence[dict[str, str]], data_config: dict[str, Any]
+) -> str | None:
+    min_line_chars = int(data_config.get("repeated_line_min_chars", 12))
+    max_line_occurrences = int(
+        data_config.get("max_repeated_line_occurrences", 3)
+    )
+    ngram_size = int(data_config.get("repeated_ngram_size", 8))
+    max_ngram_occurrences = int(
+        data_config.get("max_repeated_ngram_occurrences", 6)
+    )
+    reject_unclosed = bool(data_config.get("reject_unclosed_blocks", True))
+
+    for message in messages:
+        if message["role"] != "assistant":
+            continue
+        content = message["content"]
+        if reject_unclosed:
+            if content.count("```") % 2:
+                return "unclosed_block"
+            for tag in ("think", "tool_call"):
+                if content.lower().count(f"<{tag}>") != content.lower().count(
+                    f"</{tag}>"
+                ):
+                    return "unclosed_block"
+
+        lines = [
+            re.sub(r"\s+", " ", line).strip().lower()
+            for line in content.splitlines()
+            if len(re.sub(r"\s+", " ", line).strip()) >= min_line_chars
+        ]
+        if lines and max(Counter(lines).values()) > max_line_occurrences:
+            return "repeated_lines"
+
+        tokens = re.findall(r"\w+|[^\w\s]", content.lower(), flags=re.UNICODE)
+        if ngram_size > 0 and len(tokens) >= ngram_size:
+            ngrams = Counter(
+                tuple(tokens[index : index + ngram_size])
+                for index in range(len(tokens) - ngram_size + 1)
+            )
+            if ngrams and max(ngrams.values()) > max_ngram_occurrences:
+                return "repeated_ngram"
+    return None
+
+
+def _near_fingerprint(messages: Sequence[dict[str, str]]) -> str:
+    markers: list[str] = []
+    for message in messages:
+        content = re.sub(r"\b\d+(?:\.\d+)?\b", "<num>", message["content"])
+        content = re.sub(r"\s+", " ", content).strip().lower()
+        markers.append(f"{message['role']}:{content}")
+    return _stable_hash(*markers)
+
+
+def _without_thinking(
+    messages: Sequence[dict[str, str]],
+) -> list[dict[str, str]]:
+    converted: list[dict[str, str]] = []
+    for message in messages:
+        content = message["content"]
+        if message["role"] == "assistant":
+            content = THINK_RE.sub("", content).strip()
+        if content:
+            converted.append({"role": message["role"], "content": content})
+    return converted
+
+
 def _row_success(row: dict[str, Any]) -> bool:
     for key in (
         "verified_success",
@@ -410,6 +477,9 @@ def build_candidates(
         data_config.get("max_repeated_message_run", 2)
     ):
         return [], "repeated_messages"
+    quality_rejection = _assistant_quality_rejection(messages, data_config)
+    if quality_rejection:
+        return [], quality_rejection
 
     combined = "\n".join(message["content"] for message in messages)
     lowered = combined.lower()
@@ -453,6 +523,23 @@ def build_candidates(
 
     candidates: list[dict[str, Any]] = []
     for segment_index, segment in enumerate(segments):
+        category = str(source["category"])
+        direct_fractions = data_config.get(
+            "direct_conversion_fraction_by_category", {}
+        )
+        direct_fraction = float(direct_fractions.get(category, 0.0))
+        conversion_key = _stable_hash(source_key, source_id, segment_index)
+        conversion_value = int(conversion_key[:8], 16) / 0xFFFFFFFF
+        if direct_fraction and conversion_value < direct_fraction:
+            converted = _without_thinking(segment)
+            if converted != segment and any(
+                message["role"] == "assistant" for message in converted
+            ):
+                segment = converted
+
+        quality_rejection = _assistant_quality_rejection(segment, data_config)
+        if quality_rejection:
+            continue
         num_tokens = int(token_counter(segment))
         if num_tokens < int(data_config.get("min_tokens", 32)):
             continue
@@ -463,12 +550,9 @@ def build_candidates(
             for message in segment
             if message["role"] == "assistant"
         )
-        user_chars = sum(
-            len(message["content"])
-            for message in segment
-            if message["role"] == "user"
-        )
-        if user_chars < 240 and assistant_chars > 24000:
+        if assistant_chars > int(
+            data_config.get("max_assistant_chars", 20000)
+        ):
             continue
         fingerprint = _stable_hash(
             *(_normalized_message_marker(message) for message in segment)
@@ -483,11 +567,12 @@ def build_candidates(
                 "source_id": source_id,
                 "source_revision": str(source.get("revision", "main")),
                 "license": str(source.get("license", "unknown")),
-                "category": str(source["category"]),
+                "category": category,
                 "reasoning_band": reasoning_band(segment, text_token_counter),
                 "verified": verified,
                 "num_tokens": num_tokens,
                 "fingerprint": fingerprint,
+                "near_fingerprint": _near_fingerprint(segment),
                 "messages": segment,
             }
         )
@@ -509,12 +594,17 @@ def load_holdout_ids(path: str | Path | None) -> set[str]:
 
 def deduplicate(examples: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: set[str] = set()
+    seen_near: set[str] = set()
     unique: list[dict[str, Any]] = []
     for example in examples:
         fingerprint = str(example["fingerprint"])
         if fingerprint in seen:
             continue
+        near_fingerprint = str(example.get("near_fingerprint", fingerprint))
+        if near_fingerprint in seen_near:
+            continue
         seen.add(fingerprint)
+        seen_near.add(near_fingerprint)
         unique.append(example)
     return unique
 
@@ -546,6 +636,84 @@ def _take_until(
     return chosen, tokens
 
 
+def _allocate_token_matrix(
+    buckets: dict[tuple[str, str], list[dict[str, Any]]],
+    category_targets: dict[str, int],
+    reasoning_targets: dict[str, int],
+) -> tuple[dict[tuple[str, str], int], int]:
+    source = ("source", "")
+    sink = ("sink", "")
+    residual: dict[tuple[tuple[str, str], tuple[str, str]], int] = {}
+    neighbors: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
+
+    def add_edge(
+        start: tuple[str, str], end: tuple[str, str], capacity: int
+    ) -> None:
+        residual[(start, end)] = capacity
+        residual[(end, start)] = 0
+        neighbors[start].append(end)
+        neighbors[end].append(start)
+
+    for category, target in category_targets.items():
+        category_node = ("category", category)
+        add_edge(source, category_node, target)
+        for band in reasoning_targets:
+            available = sum(
+                int(example["num_tokens"])
+                for example in buckets.get((category, band), [])
+            )
+            if available:
+                add_edge(category_node, ("band", band), available)
+    for band, target in reasoning_targets.items():
+        add_edge(("band", band), sink, target)
+
+    total_flow = 0
+    while True:
+        parent: dict[tuple[str, str], tuple[str, str] | None] = {source: None}
+        queue = [source]
+        queue_index = 0
+        while queue_index < len(queue) and sink not in parent:
+            node = queue[queue_index]
+            queue_index += 1
+            for neighbor in neighbors[node]:
+                if neighbor in parent or residual[(node, neighbor)] <= 0:
+                    continue
+                parent[neighbor] = node
+                queue.append(neighbor)
+        if sink not in parent:
+            break
+
+        path_capacity = sum(category_targets.values())
+        node = sink
+        while parent[node] is not None:
+            previous = parent[node]
+            path_capacity = min(path_capacity, residual[(previous, node)])
+            node = previous
+        node = sink
+        while parent[node] is not None:
+            previous = parent[node]
+            residual[(previous, node)] -= path_capacity
+            residual[(node, previous)] += path_capacity
+            node = previous
+        total_flow += path_capacity
+
+    allocations: dict[tuple[str, str], int] = {}
+    for category in category_targets:
+        category_node = ("category", category)
+        for band in reasoning_targets:
+            band_node = ("band", band)
+            if (category_node, band_node) not in residual:
+                continue
+            available = sum(
+                int(example["num_tokens"])
+                for example in buckets.get((category, band), [])
+            )
+            flow = available - residual[(category_node, band_node)]
+            if flow:
+                allocations[(category, band)] = flow
+    return allocations, total_flow
+
+
 def mix_by_tokens(
     examples: Iterable[dict[str, Any]],
     *,
@@ -553,8 +721,19 @@ def mix_by_tokens(
     category_weights: dict[str, float],
     reasoning_weights: dict[str, float],
     seed: int,
+    max_examples_per_group: int = 0,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     unique = deduplicate(examples)
+    if max_examples_per_group > 0:
+        limited: list[dict[str, Any]] = []
+        group_counts: Counter[str] = Counter()
+        for example in _ordered(unique, seed, "group-limit"):
+            group_id = str(example["group_id"])
+            if group_counts[group_id] >= max_examples_per_group:
+                continue
+            limited.append(example)
+            group_counts[group_id] += 1
+        unique = limited
     buckets: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for example in unique:
         buckets[(example["category"], example["reasoning_band"])].append(example)
@@ -573,14 +752,6 @@ def mix_by_tokens(
             category_tokens[str(example["category"])] += tokens
             reasoning_tokens[str(example["reasoning_band"])] += tokens
 
-    for category, category_weight in category_weights.items():
-        for band, reasoning_weight in reasoning_weights.items():
-            target = round(token_budget * category_weight * reasoning_weight)
-            chosen, _ = _take_until(
-                buckets.get((category, band), []), target, selected_ids
-            )
-            add(chosen)
-
     category_targets = {
         category: round(token_budget * weight)
         for category, weight in category_weights.items()
@@ -590,27 +761,58 @@ def mix_by_tokens(
         for band, weight in reasoning_weights.items()
     }
 
-    # Compensa categoria e faixa simultaneamente. O spill antigo usava qualquer
-    # faixa disponível e podia fazer "long" dominar mesmo após atingir sua meta.
-    for category in category_weights:
+    allocations, maximum_feasible_tokens = _allocate_token_matrix(
+        buckets, category_targets, reasoning_targets
+    )
+    for (category, band), target in allocations.items():
+        chosen, _ = _take_until(
+            buckets[(category, band)], target, selected_ids
+        )
+        add(chosen)
+
+    # Corrige pequenos déficits causados pela granularidade dos exemplos sem
+    # permitir spill para uma categoria ou faixa que já atingiu a própria meta.
+    category_order = sorted(
+        category_weights,
+        key=lambda category: (
+            sum(
+                bool(buckets.get((category, band)))
+                for band in reasoning_weights
+            ),
+            list(category_weights).index(category),
+        ),
+    )
+    for category in category_order:
         category_deficit = max(
             0, category_targets[category] - category_tokens[category]
         )
-        if not category_deficit:
-            continue
-        for band in sorted(
-            reasoning_weights,
-            key=lambda name: (
-                reasoning_targets[name] - reasoning_tokens[name],
-                reasoning_weights[name],
-            ),
-            reverse=True,
-        ):
+        while category_deficit > 0:
+            available_bands = [
+                band
+                for band in reasoning_weights
+                if buckets.get((category, band))
+                and any(
+                    str(example["id"]) not in selected_ids
+                    for example in buckets[(category, band)]
+                )
+                and reasoning_targets[band] - reasoning_tokens[band] > 0
+            ]
+            if not available_bands:
+                break
+            band = max(
+                available_bands,
+                key=lambda name: (
+                    (
+                        reasoning_targets[name] - reasoning_tokens[name]
+                    )
+                    / max(reasoning_targets[name], 1),
+                    reasoning_targets[name] - reasoning_tokens[name],
+                    reasoning_weights[name],
+                ),
+            )
             reasoning_deficit = max(
                 0, reasoning_targets[band] - reasoning_tokens[band]
             )
-            if not reasoning_deficit or category_deficit <= 0:
-                continue
             chosen, _ = _take_until(
                 buckets.get((category, band), []),
                 min(category_deficit, reasoning_deficit),
@@ -620,32 +822,6 @@ def mix_by_tokens(
             category_deficit = max(
                 0, category_targets[category] - category_tokens[category]
             )
-
-    # Permite que outra categoria cubra uma faixa deficitária, mas nunca
-    # completa o orçamento usando uma faixa de raciocínio já excedida.
-    for band in sorted(
-        reasoning_weights,
-        key=lambda name: (
-            reasoning_targets[name] - reasoning_tokens[name],
-            reasoning_weights[name],
-        ),
-        reverse=True,
-    ):
-        deficit = max(0, reasoning_targets[band] - reasoning_tokens[band])
-        if not deficit:
-            continue
-        pool = _ordered(
-            (
-                example
-                for example in unique
-                if example["reasoning_band"] == band
-                and example["id"] not in selected_ids
-            ),
-            seed,
-            f"{band}:reasoning-spill",
-        )
-        chosen, _ = _take_until(pool, deficit, selected_ids)
-        add(chosen)
 
     selected = _ordered(selected, seed, "final-shuffle")
     actual_total = sum(int(example["num_tokens"]) for example in selected)
@@ -666,7 +842,39 @@ def mix_by_tokens(
             for key, value in sorted(counter.items())
         }
 
+    def matrix(
+        values: Sequence[dict[str, Any]],
+    ) -> dict[str, dict[str, dict[str, int]]]:
+        result = {
+            category: {
+                band: {"examples": 0, "tokens": 0}
+                for band in reasoning_weights
+            }
+            for category in category_weights
+        }
+        for example in values:
+            category = str(example["category"])
+            band = str(example["reasoning_band"])
+            if category not in result or band not in result[category]:
+                continue
+            result[category][band]["examples"] += 1
+            result[category][band]["tokens"] += int(example["num_tokens"])
+        return result
+
+    actual_category_distribution = distribution(actual_categories)
     actual_reasoning_distribution = distribution(actual_reasoning)
+    category_deviation = {
+        category: round(
+            float(
+                actual_category_distribution.get(category, {}).get(
+                    "fraction", 0.0
+                )
+            )
+            - weight,
+            6,
+        )
+        for category, weight in category_weights.items()
+    }
     reasoning_deviation = {
         band: round(
             float(actual_reasoning_distribution.get(band, {}).get("fraction", 0.0))
@@ -681,8 +889,25 @@ def mix_by_tokens(
         "budget_fraction": round(actual_total / token_budget, 6),
         "selected_examples": len(selected),
         "available_unique_examples": len(unique),
+        "available_unique_groups": len(
+            {str(example["group_id"]) for example in unique}
+        ),
         "budget_reached": actual_total >= token_budget,
-        "category_distribution": distribution(actual_categories),
+        "maximum_feasible_tokens": maximum_feasible_tokens,
+        "matrix_feasible": maximum_feasible_tokens >= token_budget,
+        "category_distribution": actual_category_distribution,
+        "category_targets": {
+            category: {
+                "tokens": category_targets[category],
+                "fraction": float(weight),
+            }
+            for category, weight in category_weights.items()
+        },
+        "category_deviation": category_deviation,
+        "max_category_deviation": max(
+            (abs(value) for value in category_deviation.values()),
+            default=0.0,
+        ),
         "reasoning_distribution": actual_reasoning_distribution,
         "reasoning_targets": {
             band: {
@@ -696,6 +921,8 @@ def mix_by_tokens(
             (abs(value) for value in reasoning_deviation.values()),
             default=0.0,
         ),
+        "candidate_matrix": matrix(unique),
+        "selected_matrix": matrix(selected),
     }
     return selected, report
 

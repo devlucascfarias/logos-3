@@ -10,12 +10,20 @@ data:
   candidate_oversample: 2.5
   shuffle_buffer: 10000
   validation_fraction: 0.02
-  validation_min_examples: 16
-  max_reasoning_deviation: 0.08
+  validation_min_examples: 32
+  max_category_deviation: 0.05
+  max_reasoning_deviation: 0.05
   min_token_budget_fraction: 0.95
+  max_examples_per_group: 2
   max_tool_output_chars: 12000
   max_tool_messages: 48
   max_repeated_message_run: 2
+  repeated_line_min_chars: 12
+  max_repeated_line_occurrences: 3
+  repeated_ngram_size: 8
+  max_repeated_ngram_occurrences: 6
+  reject_unclosed_blocks: true
+  max_assistant_chars: 20000
   min_tokens: 32
   holdout_ids_file: data/eval_holdout_ids.txt
   blocked_benchmark_markers:
@@ -29,8 +37,30 @@ data:
     medium: 0.22
     long: 0.30
     direct: 0.45
+  # Converte deterministicamente parte do CoT verificado em respostas diretas,
+  # preservando a resposta final em vez de truncar raciocínio.
+  direct_conversion_fraction_by_category:
+    verified_code: 0.45
 
 stages:
+  pilot:
+    token_budget: 500000
+    category_weights:
+      verified_code: 0.60
+      reasoning: 0.20
+      swe: 0.10
+      claude_code: 0.05
+      general_tools: 0.05
+    training:
+      output_dir: outputs/checkpoints/pilot
+      adapter_output_dir: outputs/adapters/pilot
+      learning_rate: 0.00005
+      num_train_epochs: 1
+      max_seq_length: 4096
+      logging_steps: 1
+      save_steps: 1
+      eval_steps: 1
+      save_total_limit: 20
   baseline:
     token_budget: 15000000
     category_weights:

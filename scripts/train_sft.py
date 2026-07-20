@@ -21,7 +21,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--config", default="configs/recipe.yaml")
     parser.add_argument(
-        "--stage", choices=("baseline", "main", "agentic"), default="baseline"
+        "--stage",
+        choices=("pilot", "baseline", "main", "agentic"),
+        default="pilot",
     )
     parser.add_argument(
         "--resume-from-checkpoint",
@@ -184,6 +186,12 @@ def _manifest(
             "validation_file": str(validation_file),
             "validation_sha256": (
                 file_sha256(validation_file) if validation_file.exists() else None
+            ),
+            "dataset_report_file": str(train_file.parent / "dataset_report.json"),
+            "dataset_report_sha256": (
+                file_sha256(train_file.parent / "dataset_report.json")
+                if (train_file.parent / "dataset_report.json").exists()
+                else None
             ),
         },
         "training": training,
@@ -447,6 +455,10 @@ def main() -> None:
         manifest["eval_metrics"] = eval_metrics
     manifest["train_metrics"] = metrics
     manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, default=str) + "\n",
+        encoding="utf-8",
+    )
+    (adapter_output / "run_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, default=str) + "\n",
         encoding="utf-8",
     )

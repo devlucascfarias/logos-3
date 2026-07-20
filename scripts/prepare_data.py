@@ -28,7 +28,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--config", default="configs/recipe.yaml")
     parser.add_argument(
-        "--stage", choices=("baseline", "main", "agentic"), default="baseline"
+        "--stage",
+        choices=("pilot", "baseline", "main", "agentic"),
+        default="pilot",
     )
     parser.add_argument(
         "--token-budget",
@@ -205,6 +207,11 @@ def _collect_remote_candidates(
 
     candidates: list[dict[str, Any]] = []
     seen_fingerprints: set[str] = set()
+    seen_near_fingerprints: set[str] = set()
+    group_counts: Counter[str] = Counter()
+    max_examples_per_group = int(
+        data_config.get("max_examples_per_group", 0)
+    )
     source_reports: list[dict[str, Any]] = []
     for source_index, configured_source in enumerate(config["sources"]):
         source = dict(configured_source)
@@ -220,6 +227,7 @@ def _collect_remote_candidates(
         )
         accepted_tokens = 0
         accepted_examples = 0
+        accepted_groups: set[str] = set()
         scanned_rows = 0
         rejections: Counter[str] = Counter()
         print(
@@ -256,7 +264,25 @@ def _collect_remote_candidates(
                     if example["fingerprint"] in seen_fingerprints:
                         rejections["duplicate"] += 1
                         continue
+                    near_fingerprint = str(
+                        example.get(
+                            "near_fingerprint", example["fingerprint"]
+                        )
+                    )
+                    if near_fingerprint in seen_near_fingerprints:
+                        rejections["near_duplicate"] += 1
+                        continue
+                    group_id = str(example["group_id"])
+                    if (
+                        max_examples_per_group > 0
+                        and group_counts[group_id] >= max_examples_per_group
+                    ):
+                        rejections["group_limit"] += 1
+                        continue
                     seen_fingerprints.add(example["fingerprint"])
+                    seen_near_fingerprints.add(near_fingerprint)
+                    group_counts[group_id] += 1
+                    accepted_groups.add(group_id)
                     candidates.append(example)
                     accepted_tokens += int(example["num_tokens"])
                     accepted_examples += 1
@@ -273,6 +299,7 @@ def _collect_remote_candidates(
             "target_candidate_tokens": source_target,
             "accepted_tokens": accepted_tokens,
             "accepted_examples": accepted_examples,
+            "accepted_groups": len(accepted_groups),
             "scanned_rows": scanned_rows,
             "target_reached": accepted_tokens >= source_target,
             "rejections": dict(sorted(rejections.items())),
@@ -322,6 +349,9 @@ def main() -> None:
             for key, value in config["data"]["reasoning_distribution"].items()
         },
         seed=int(config.get("seed", 42)),
+        max_examples_per_group=int(
+            config["data"].get("max_examples_per_group", 0)
+        ),
     )
     train, validation = split_by_group(
         selected,
@@ -366,6 +396,20 @@ def main() -> None:
         raise SystemExit(
             "Nenhum exemplo de treino foi selecionado. Consulte "
             f"{report_path} para ver as rejeições por fonte."
+        )
+
+    max_category_deviation = float(
+        config["data"].get("max_category_deviation", 1.0)
+    )
+    if mix_report["max_category_deviation"] > max_category_deviation:
+        for stale_path in (train_path, validation_path):
+            if stale_path.exists():
+                stale_path.unlink()
+        raise SystemExit(
+            "A distribuição por categoria excedeu o desvio permitido "
+            f"({mix_report['max_category_deviation']:.1%} > "
+            f"{max_category_deviation:.1%}). Consulte a matriz de candidatos "
+            f"em {report_path}."
         )
 
     max_reasoning_deviation = float(

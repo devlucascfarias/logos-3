@@ -67,3 +67,33 @@ def test_rendered_outputs_include_rubric():
     assert "Resposta A" in markdown
     assert "Correção (0–5)" in markdown
     assert "instruction_following" in serialized
+
+
+def test_blind_results_support_reference_adapter():
+    results = [
+        {
+            "id": "one",
+            "title": "One",
+            "prompt": "Prompt",
+            "base": {"text": "base answer", "seconds": 1.0},
+            "adapter": {"text": "candidate answer", "seconds": 2.0},
+            "reference": {"text": "reference answer", "seconds": 3.0},
+        }
+    ]
+
+    comparisons, mapping = compare_adapter._blind_results(results, seed=7)
+    labels = {"A", "B", "C"}
+
+    assert labels <= comparisons[0].keys()
+    assert {comparisons[0][label] for label in labels} == {
+        "base answer",
+        "candidate answer",
+        "reference answer",
+    }
+    assert {mapping[0][label] for label in labels} == {
+        "base",
+        "adapter",
+        "reference",
+    }
+    assert "Resposta C" in compare_adapter._render_markdown(comparisons)
+    assert "C" in compare_adapter._rating_template(comparisons)[0]["ratings"]

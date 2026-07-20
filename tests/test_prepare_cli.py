@@ -68,8 +68,11 @@ def test_prepare_cli_with_local_candidates(tmp_path):
     assert (output_dir / "validation.jsonl").exists()
     assert report["mix"]["budget_reached"]
     assert report["mix"]["budget_fraction"] >= 0.95
-    assert report["mix"]["max_reasoning_deviation"] <= 0.08
-    assert report["split"]["validation_examples"] >= 16
+    assert report["mix"]["max_category_deviation"] <= 0.05
+    assert report["mix"]["max_reasoning_deviation"] <= 0.05
+    assert report["mix"]["candidate_matrix"]
+    assert report["mix"]["selected_matrix"]
+    assert report["split"]["validation_examples"] >= 32
     assert report["split"]["group_overlap"] is False
 
 

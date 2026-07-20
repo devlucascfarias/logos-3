@@ -10,8 +10,10 @@ O fluxo entregue cobre:
 
 - download em streaming das seis fontes da receita;
 - normalização para `messages` no chat template oficial do Qwen3;
-- remoção de segredos, holdouts, loops, duplicatas e exemplos inválidos;
+- remoção de segredos, holdouts, loops, duplicatas exatas/aproximadas,
+  repetições degeneradas e exemplos com blocos incompletos;
 - segmentação por turnos de traces que excedem 4096 tokens;
+- limite de dois segmentos por conversa/repositório para reduzir concentração;
 - mistura `60/20/10/5/5` no baseline e `45/20/20/10/5` no SFT principal;
 - distribuição de raciocínio controlada, com respostas diretas predominantes
   e limite explícito para raciocínios longos;
@@ -23,10 +25,11 @@ O fluxo entregue cobre:
 
 Abra e execute
 [`notebooks/qwen3_8b_l4_sft_colab.ipynb`](notebooks/qwen3_8b_l4_sft_colab.ipynb).
-O notebook começa em modo smoke test: prepara até 250 mil tokens e executa uma
-época sobre no máximo 250 exemplos. O Trainer calcula os steps, evitando
-repetições artificiais da pequena amostra. Depois de validar o ambiente, troque
-`SMOKE_TEST` para `False` para usar o orçamento configurado.
+O notebook começa no estágio isolado `pilot`: prepara 500 mil tokens e executa
+uma época com learning rate `5e-5`. O baseline campeão não é retomado nem
+sobrescrito. O preparo só libera o treino quando atingir pelo menos 95% do
+orçamento e mantiver os desvios globais de categoria e raciocínio em até cinco
+pontos percentuais.
 
 Crie um secret `HF_TOKEN` no Colab. Se o repositório não for público, crie
 também `GH_TOKEN` com permissão somente de leitura.
@@ -41,20 +44,19 @@ python -m pip install -e . --no-deps
 python scripts/environment_check.py
 ```
 
-Valide o pipeline com um corpus pequeno:
+Execute o piloto candidato:
 
 ```bash
 python scripts/prepare_data.py \
-  --stage baseline \
-  --token-budget 250000 \
-  --max-source-rows 5000
+  --stage pilot
 pytest -q
 python scripts/train_sft.py \
-  --stage baseline \
-  --max-train-samples 250
+  --stage pilot \
+  --resume-from-checkpoint none
 ```
 
-Quando o smoke test estiver estável, execute as duas etapas úteis:
+Somente depois de o piloto superar o modelo-base e o adapter campeão, execute
+as etapas maiores:
 
 ```bash
 python scripts/prepare_data.py --stage baseline
@@ -90,12 +92,13 @@ Cada linha final tem `messages` e metadados de auditoria:
 
 O relatório `data/processed/<stage>/dataset_report.json` mostra tokens por
 categoria, comprimento de raciocínio, rejeições por fonte e isolamento de
-grupos entre treino e validação. `budget_reached=false` significa que a
-varredura não encontrou candidatos suficientes; aumente `--max-source-rows` ou
-remova esse limite. O preparo interrompe antes do treino quando a cobertura
-fica abaixo de 95% ou a distribuição de raciocínio excede o desvio máximo
-configurado. A validação reserva pelo menos 16 exemplos sem sobreposição de
-grupos.
+grupos entre treino e validação. As matrizes `candidate_matrix` e
+`selected_matrix` permitem localizar exatamente qual combinação de categoria e
+faixa de raciocínio está escassa. `budget_reached=false` significa que a
+varredura não encontrou candidatos suficientes. O preparo interrompe antes do
+treino quando a cobertura fica abaixo de 95% ou qualquer uma das duas
+distribuições excede o desvio máximo configurado. A validação reserva pelo
+menos 32 exemplos sem sobreposição de grupos.
 
 Adicione IDs reservados para avaliação em
 [`data/eval_holdout_ids.txt`](data/eval_holdout_ids.txt) **antes** do
@@ -114,6 +117,10 @@ Os parâmetros centrais seguem a receita:
 - checkpoint e avaliação a cada 250 steps;
 - loss somente nos tokens do assistente.
 
+O estágio `pilot` é deliberadamente mais conservador: 500 mil tokens, learning
+rate `5e-5`, uma época e checkpoints com avaliação a cada passo. Seus
+artefatos ficam em `outputs/checkpoints/pilot` e `outputs/adapters/pilot`.
+
 O packing usa a estratégia `wrapped` porque o `bfd` atual ativa
 `padding_free`, que depende de FlashAttention. Isso mantém a instalação da L4
 mais previsível sem desativar packing.
@@ -124,15 +131,22 @@ avaliação com `--no-eval`.
 
 ## Avaliação e checkpoint
 
-Para o smoke comportamental, compare cegamente o modelo-base com o adapter nos
-13 prompts inéditos da suíte:
+Para a avaliação comportamental, compare cegamente o modelo-base, o candidato
+de 500k e o adapter campeão de 250k nos mesmos 13 prompts inéditos:
 
 ```bash
-python scripts/compare_adapter.py --stage baseline
+python scripts/compare_adapter.py \
+  --stage pilot \
+  --adapter-path outputs/adapters/pilot \
+  --reference-adapter-path /caminho/para/o/adapter-campeao \
+  --output-dir outputs/evaluations/pilot_500k \
+  --seed 20260722
 ```
 
-Avalie `outputs/evaluations/baseline_smoke/comparison.md` antes de consultar
-`mapping.json`.
+Avalie `outputs/evaluations/pilot_500k/comparison.md` antes de consultar
+`mapping.json`. Promova o candidato somente se ele superar o campeão em
+correção e cumprimento das instruções sem aumentar repetição, truncamento ou
+overthinking; `eval_loss` isoladamente não decide a promoção.
 
 Avalie o base e todos os checkpoints no mesmo conjunto descontaminado. O
 pipeline deixa a execução de código gerado para um container/VM separado:

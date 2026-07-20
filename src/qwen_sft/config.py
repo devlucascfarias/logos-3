@@ -36,6 +36,24 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("data.max_seq_length deve ser positivo.")
     if int(data.get("validation_min_examples", 0)) < 0:
         raise ValueError("data.validation_min_examples não pode ser negativo.")
+    if int(data.get("max_examples_per_group", 0)) < 0:
+        raise ValueError("data.max_examples_per_group não pode ser negativo.")
+    if float(data.get("candidate_oversample", 1.0)) < 1:
+        raise ValueError("data.candidate_oversample deve ser ao menos 1.")
+    for key in (
+        "repeated_line_min_chars",
+        "max_repeated_line_occurrences",
+        "repeated_ngram_size",
+        "max_repeated_ngram_occurrences",
+        "max_assistant_chars",
+    ):
+        if int(data.get(key, 1)) <= 0:
+            raise ValueError(f"data.{key} deve ser positivo.")
+    max_category_deviation = float(data.get("max_category_deviation", 1.0))
+    if not 0 <= max_category_deviation <= 1:
+        raise ValueError(
+            "data.max_category_deviation deve estar no intervalo [0, 1]."
+        )
     max_reasoning_deviation = float(data.get("max_reasoning_deviation", 1.0))
     if not 0 <= max_reasoning_deviation <= 1:
         raise ValueError(
@@ -48,6 +66,14 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError(
             "data.min_token_budget_fraction deve estar no intervalo [0, 1]."
         )
+    for category, fraction in data.get(
+        "direct_conversion_fraction_by_category", {}
+    ).items():
+        if not 0 <= float(fraction) <= 1:
+            raise ValueError(
+                "data.direct_conversion_fraction_by_category "
+                f"possui valor inválido para {category}."
+            )
     _validate_distribution(
         "data.reasoning_distribution", data["reasoning_distribution"]
     )

@@ -17,7 +17,7 @@ def test_colab_notebook_is_valid_and_references_pipeline():
     )
     assert "prepare_data.py" in source
     assert "train_sft.py" in source
-    assert "SMOKE_TEST" in source
+    assert 'STAGE = "pilot"' in source
     assert '"-u", "scripts/train_sft.py"' in source
     assert "barra de progresso e ETA" in source
     assert "subprocess.Popen" in source
@@ -26,5 +26,8 @@ def test_colab_notebook_is_valid_and_references_pipeline():
     assert "compare_adapter.py" in source
     assert "comparison.md" in source
     assert "mapping.json" in source
-    assert "FRESH_SMOKE_RUN" in source
+    assert "FRESH_RUN" in source
     assert "outputs\" / \"archive" in source
+    assert "REFERENCE_ADAPTER_PATH" in source
+    assert 'drive.mount("/content/drive")' in source
+    assert "pilot_500k" in source
