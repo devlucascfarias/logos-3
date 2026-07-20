@@ -45,21 +45,23 @@ def test_progress_callback_tracks_steps_and_metrics(monkeypatch):
         max_steps=30,
         global_step=0,
     )
+    args = SimpleNamespace(gradient_accumulation_steps=16)
 
-    callback.on_train_begin(None, state, None)
-    state.global_step = 5
-    callback.on_step_end(None, state, None)
+    callback.on_train_begin(args, state, None)
+    callback.on_substep_end(args, state, None)
+    state.global_step = 1
+    callback.on_step_end(args, state, None)
     callback.on_log(
-        None,
+        args,
         state,
         None,
         logs={"loss": 1.25, "learning_rate": 0.0001},
     )
-    callback.on_train_end(None, state, None)
+    callback.on_train_end(args, state, None)
 
     assert len(bars) == 1
     assert bars[0].description == "Treino baseline"
-    assert bars[0].total == 30
-    assert bars[0].n == 5
+    assert bars[0].total == 480
+    assert bars[0].n == 16
     assert bars[0].postfix == {"loss": "1.25", "lr": "0.0001"}
     assert bars[0].closed

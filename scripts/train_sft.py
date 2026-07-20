@@ -80,19 +80,27 @@ def _make_progress_callback(base_class: type, stage: str):
     class TrainingProgressCallback(base_class):
         def __init__(self) -> None:
             self.progress = None
+            self.gradient_accumulation_steps = 1
 
         def on_train_begin(self, args, state, control, **kwargs):
             if not state.is_world_process_zero:
                 return
             from tqdm import tqdm
 
-            total = max(int(state.max_steps), 1)
-            initial = min(int(state.global_step), total)
+            self.gradient_accumulation_steps = max(
+                int(args.gradient_accumulation_steps), 1
+            )
+            optimizer_steps = max(int(state.max_steps), 1)
+            total = optimizer_steps * self.gradient_accumulation_steps
+            initial = min(
+                int(state.global_step) * self.gradient_accumulation_steps,
+                total,
+            )
             self.progress = tqdm(
                 total=total,
                 initial=initial,
                 desc=f"Treino {stage}",
-                unit="step",
+                unit="microbatch",
                 dynamic_ncols=True,
                 mininterval=0.5,
                 smoothing=0.1,
@@ -103,15 +111,22 @@ def _make_progress_callback(base_class: type, stage: str):
                 ),
             )
             print(
-                f"Progresso: {initial}/{total} passos. "
-                "O ETA aparece após os primeiros passos.",
+                f"Progresso: {total:,} microbatches "
+                f"({optimizer_steps:,} passos × "
+                f"{self.gradient_accumulation_steps} acumulações). "
+                "O ETA aparece após os primeiros microbatches.",
                 flush=True,
             )
+
+        def on_substep_end(self, args, state, control, **kwargs):
+            if self.progress is not None:
+                self.progress.update(1)
 
         def on_step_end(self, args, state, control, **kwargs):
             if self.progress is None:
                 return
-            delta = int(state.global_step) - int(self.progress.n)
+            target = int(state.global_step) * self.gradient_accumulation_steps
+            delta = target - int(self.progress.n)
             if delta > 0:
                 self.progress.update(delta)
 
@@ -134,7 +149,8 @@ def _make_progress_callback(base_class: type, stage: str):
         def on_train_end(self, args, state, control, **kwargs):
             if self.progress is None:
                 return
-            delta = int(state.global_step) - int(self.progress.n)
+            target = int(state.global_step) * self.gradient_accumulation_steps
+            delta = target - int(self.progress.n)
             if delta > 0:
                 self.progress.update(delta)
             self.progress.close()
