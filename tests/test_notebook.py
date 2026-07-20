@@ -20,3 +20,6 @@ def test_colab_notebook_is_valid_and_references_pipeline():
     assert "SMOKE_TEST" in source
     assert '"-u", "scripts/train_sft.py"' in source
     assert "barra de progresso e ETA" in source
+    assert "subprocess.Popen" in source
+    assert "os.read(process.stdout.fileno(), 4096)" in source
+    assert "Log salvo em:" in source
