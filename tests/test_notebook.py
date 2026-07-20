@@ -17,7 +17,9 @@ def test_colab_notebook_is_valid_and_references_pipeline():
     )
     assert "prepare_data.py" in source
     assert "train_sft.py" in source
-    assert 'STAGE = "pilot"' in source
+    assert 'STAGE = "pilot_continuation"' in source
+    assert 'DATA_STAGE = "pilot"' in source
+    assert "RUN_DATA_PREPARATION = False" in source
     assert '"-u", "scripts/train_sft.py"' in source
     assert "barra de progresso e ETA" in source
     assert "subprocess.Popen" in source
@@ -29,5 +31,10 @@ def test_colab_notebook_is_valid_and_references_pipeline():
     assert "FRESH_RUN" in source
     assert "outputs\" / \"archive" in source
     assert "REFERENCE_ADAPTER_PATH" in source
+    assert "SOURCE_ADAPTER_PATH" in source
+    assert "DATA_BACKUP_PATH" in source
+    assert '"--data-stage", DATA_STAGE' in source
+    assert '"--adapter-path", SOURCE_ADAPTER_PATH' in source
+    assert "Dados pilot verificados por hash" in source
     assert 'drive.mount("/content/drive")' in source
-    assert "pilot_500k" in source
+    assert "pilot_continuation" in source

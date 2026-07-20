@@ -1,7 +1,11 @@
 import importlib.util
+import hashlib
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,3 +69,63 @@ def test_progress_callback_tracks_steps_and_metrics(monkeypatch):
     assert bars[0].n == 16
     assert bars[0].postfix == {"loss": "1.25", "lr": "0.0001"}
     assert bars[0].closed
+
+
+def test_source_data_verification_detects_drift(tmp_path):
+    data_dir = tmp_path / "data" / "processed" / "pilot"
+    adapter_dir = tmp_path / "adapter"
+    data_dir.mkdir(parents=True)
+    adapter_dir.mkdir()
+    train_file = data_dir / "train.jsonl"
+    validation_file = data_dir / "validation.jsonl"
+    report_file = data_dir / "dataset_report.json"
+    train_file.write_text('{"messages": []}\n', encoding="utf-8")
+    validation_file.write_text('{"messages": []}\n', encoding="utf-8")
+    report_file.write_text("{}\n", encoding="utf-8")
+
+    def sha256(path):
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    (adapter_dir / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "train_sha256": sha256(train_file),
+                    "validation_sha256": sha256(validation_file),
+                    "dataset_report_sha256": sha256(report_file),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    train_sft._verify_source_data(
+        adapter_dir, train_file, validation_file
+    )
+    train_file.write_text('{"changed": true}\n', encoding="utf-8")
+    with pytest.raises(SystemExit, match="não correspondem"):
+        train_sft._verify_source_data(
+            adapter_dir, train_file, validation_file
+        )
+
+
+def test_continuation_arguments_are_supported(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "train_sft.py",
+            "--stage",
+            "pilot_continuation",
+            "--data-stage",
+            "pilot",
+            "--adapter-path",
+            "/tmp/adapter",
+        ],
+    )
+
+    args = train_sft.parse_args()
+
+    assert args.stage == "pilot_continuation"
+    assert args.data_stage == "pilot"
+    assert args.adapter_path == "/tmp/adapter"

@@ -20,7 +20,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="configs/recipe.yaml")
     parser.add_argument(
         "--stage",
-        choices=("pilot", "baseline", "main", "agentic"),
+        choices=(
+            "pilot",
+            "pilot_continuation",
+            "baseline",
+            "main",
+            "agentic",
+        ),
         default="pilot",
     )
     parser.add_argument(

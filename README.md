@@ -25,11 +25,10 @@ O fluxo entregue cobre:
 
 Abra e execute
 [`notebooks/qwen3_8b_l4_sft_colab.ipynb`](notebooks/qwen3_8b_l4_sft_colab.ipynb).
-O notebook começa no estágio isolado `pilot`: prepara 500 mil tokens e executa
-uma época com learning rate `5e-5`. O baseline campeão não é retomado nem
-sobrescrito. O preparo só libera o treino quando atingir pelo menos 95% do
-orçamento e mantiver os desvios globais de categoria e raciocínio em até cinco
-pontos percentuais.
+O notebook está configurado para `pilot_continuation`: parte do piloto de 500k
+preservado no Drive, reutiliza os mesmos dados verificados por SHA-256 e executa
+uma época adicional com learning rate `2e-5`. O piloto original não é retomado
+nem sobrescrito; checkpoints e adapter usam diretórios próprios.
 
 Crie um secret `HF_TOKEN` no Colab. Se o repositório não for público, crie
 também `GH_TOKEN` com permissão somente de leitura.
@@ -120,6 +119,21 @@ Os parâmetros centrais seguem a receita:
 O estágio `pilot` é deliberadamente mais conservador: 500 mil tokens, learning
 rate `5e-5`, uma época e checkpoints com avaliação a cada passo. Seus
 artefatos ficam em `outputs/checkpoints/pilot` e `outputs/adapters/pilot`.
+
+Para continuar o piloto sem reiniciar o scheduler antigo nem refazer o mix:
+
+```bash
+python scripts/train_sft.py \
+  --stage pilot_continuation \
+  --data-stage pilot \
+  --adapter-path /caminho/para/pilot_500k_step7/adapter \
+  --resume-from-checkpoint none
+```
+
+A continuação exige o `run_manifest.json` do adapter inicial e recusa o treino
+se os hashes de `train.jsonl`, `validation.jsonl` ou `dataset_report.json`
+divergirem. As saídas ficam em `outputs/checkpoints/pilot_continuation` e
+`outputs/adapters/pilot_continuation`.
 
 O packing usa a estratégia `wrapped` porque o `bfd` atual ativa
 `padding_free`, que depende de FlashAttention. Isso mantém a instalação da L4

@@ -26,6 +26,14 @@ def test_recipe_is_valid_and_matches_core_parameters():
     assert pilot["learning_rate"] == 5e-5
     assert pilot["save_steps"] == 1
     assert pilot["eval_steps"] == 1
+    continuation = merged_training_config(config, "pilot_continuation")
+    assert continuation["data_stage"] == "pilot"
+    assert continuation["requires_adapter"] is True
+    assert continuation["verify_source_data"] is True
+    assert continuation["adapter_path"] is None
+    assert continuation["learning_rate"] == 2e-5
+    assert continuation["num_train_epochs"] == 1
+    assert continuation["output_dir"].endswith("pilot_continuation")
 
 
 def test_invalid_distribution_is_rejected():

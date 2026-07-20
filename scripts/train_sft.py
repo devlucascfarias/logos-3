@@ -22,8 +22,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="configs/recipe.yaml")
     parser.add_argument(
         "--stage",
-        choices=("pilot", "baseline", "main", "agentic"),
+        choices=(
+            "pilot",
+            "pilot_continuation",
+            "baseline",
+            "main",
+            "agentic",
+        ),
         default="pilot",
+    )
+    parser.add_argument(
+        "--data-stage",
+        help="Etapa de dados a reutilizar; sobrescreve training.data_stage.",
+    )
+    parser.add_argument(
+        "--adapter-path",
+        help="Adapter inicial para continuação; sobrescreve training.adapter_path.",
     )
     parser.add_argument(
         "--resume-from-checkpoint",
@@ -76,6 +90,44 @@ def _resolve_resume(value: str, output_dir: str) -> str | None:
     except ImportError:
         return None
     return get_last_checkpoint(output_dir)
+
+
+def _verify_source_data(
+    adapter_path: Path,
+    train_file: Path,
+    validation_file: Path,
+) -> None:
+    manifest_path = adapter_path / "run_manifest.json"
+    if not manifest_path.exists():
+        raise SystemExit(
+            f"Manifesto do adapter inicial ausente: {manifest_path}"
+        )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    expected = manifest.get("data", {})
+    checks = (
+        (train_file, expected.get("train_sha256"), "treino"),
+        (
+            validation_file,
+            expected.get("validation_sha256"),
+            "validação",
+        ),
+        (
+            train_file.parent / "dataset_report.json",
+            expected.get("dataset_report_sha256"),
+            "relatório",
+        ),
+    )
+    for path, expected_hash, label in checks:
+        if not expected_hash:
+            raise SystemExit(
+                f"Hash de {label} ausente no manifesto do adapter inicial."
+            )
+        actual_hash = file_sha256(path)
+        if actual_hash != expected_hash:
+            raise SystemExit(
+                f"Os dados de {label} não correspondem ao treino original: "
+                f"{path}"
+            )
 
 
 def _make_progress_callback(base_class: type, stage: str):
@@ -164,8 +216,10 @@ def _manifest(
     *,
     config_path: str,
     stage: str,
+    data_stage: str,
     train_file: Path,
     validation_file: Path,
+    adapter_path: Path | None,
     training: dict[str, Any],
     torch: Any,
 ) -> dict[str, Any]:
@@ -181,6 +235,7 @@ def _manifest(
             "total_vram_bytes": torch.cuda.get_device_properties(0).total_memory,
         },
         "data": {
+            "stage": data_stage,
             "train_file": str(train_file),
             "train_sha256": file_sha256(train_file),
             "validation_file": str(validation_file),
@@ -194,6 +249,19 @@ def _manifest(
                 else None
             ),
         },
+        "source_adapter": (
+            {
+                "path": str(adapter_path),
+                "config_sha256": file_sha256(
+                    adapter_path / "adapter_config.json"
+                ),
+                "model_sha256": file_sha256(
+                    adapter_path / "adapter_model.safetensors"
+                ),
+            }
+            if adapter_path is not None
+            else None
+        ),
         "training": training,
     }
 
@@ -202,8 +270,15 @@ def main() -> None:
     args = parse_args()
     config = load_config(args.config)
     training = merged_training_config(config, args.stage)
-    train_file = Path(f"data/processed/{args.stage}/train.jsonl")
-    validation_file = Path(f"data/processed/{args.stage}/validation.jsonl")
+    data_stage = str(
+        args.data_stage or training.get("data_stage") or args.stage
+    )
+    adapter_path_value = args.adapter_path or training.get("adapter_path")
+    adapter_path = Path(adapter_path_value) if adapter_path_value else None
+    training["data_stage"] = data_stage
+    training["adapter_path"] = str(adapter_path) if adapter_path else None
+    train_file = Path(f"data/processed/{data_stage}/train.jsonl")
+    validation_file = Path(f"data/processed/{data_stage}/validation.jsonl")
     output_dir = str(training["output_dir"])
 
     if args.dry_run:
@@ -211,12 +286,13 @@ def main() -> None:
             json.dumps(
                 {
                     "stage": args.stage,
+                    "data_stage": data_stage,
                     "train_file": str(train_file),
                     "train_exists": train_file.exists(),
                     "validation_file": str(validation_file),
                     "validation_exists": validation_file.exists(),
                     "output_dir": output_dir,
-                    "adapter_path": training.get("adapter_path"),
+                    "adapter_path": str(adapter_path) if adapter_path else None,
                     "resume": _resolve_resume(
                         args.resume_from_checkpoint, output_dir
                     ),
@@ -227,16 +303,34 @@ def main() -> None:
             )
         )
         return
-    if args.stage == "agentic" and not training.get("adapter_path"):
+    requires_adapter = args.stage == "agentic" or training.get(
+        "requires_adapter"
+    )
+    if requires_adapter and not adapter_path:
         raise SystemExit(
-            "A etapa agentic deve continuar um adapter escolhido. Defina "
-            "stages.agentic.training.adapter_path em configs/recipe.yaml."
+            f"A etapa {args.stage} exige um adapter inicial. Use "
+            "--adapter-path ou defina training.adapter_path na configuração."
         )
+    if adapter_path:
+        if not (adapter_path / "adapter_config.json").exists() or not (
+            adapter_path / "adapter_model.safetensors"
+        ).exists():
+            raise SystemExit(
+                f"Adapter para continuação não encontrado: {adapter_path}"
+            )
+        if adapter_path.resolve() == Path(
+            training["adapter_output_dir"]
+        ).resolve():
+            raise SystemExit(
+                "O adapter inicial e o diretório de saída devem ser diferentes."
+            )
     if not train_file.exists() or train_file.stat().st_size == 0:
         raise SystemExit(
-            f"Dados ausentes ou vazios: {train_file}. "
-            "Execute scripts/prepare_data.py primeiro."
+            f"Dados ausentes ou vazios: {train_file}. A continuação deve "
+            "reutilizar os dados já aprovados; restaure-os antes do treino."
         )
+    if adapter_path and training.get("verify_source_data"):
+        _verify_source_data(adapter_path, train_file, validation_file)
 
     try:
         import torch
@@ -303,15 +397,10 @@ def main() -> None:
     )
 
     print("[3/4] Carregando modelo 4-bit e configurando LoRA...", flush=True)
-    adapter_path = training.get("adapter_path")
     peft_config = None
     model: str | Any = config["model_name"]
     trainer_quantization = quantization
     if adapter_path:
-        if not Path(adapter_path).exists():
-            raise SystemExit(
-                f"Adapter para continuação não encontrado: {adapter_path}"
-            )
         base = AutoModelForCausalLM.from_pretrained(
             config["model_name"],
             revision=config.get("model_revision", "main"),
@@ -330,7 +419,9 @@ def main() -> None:
                 "use_reentrant": bool(training.get("use_reentrant", False))
             },
         )
-        model = PeftModel.from_pretrained(base, adapter_path, is_trainable=True)
+        model = PeftModel.from_pretrained(
+            base, str(adapter_path), is_trainable=True
+        )
         trainer_quantization = None
     else:
         peft_config = LoraConfig(
@@ -406,8 +497,10 @@ def main() -> None:
     manifest = _manifest(
         config_path=args.config,
         stage=args.stage,
+        data_stage=data_stage,
         train_file=train_file,
         validation_file=validation_file,
+        adapter_path=adapter_path,
         training=training,
         torch=torch,
     )

@@ -61,6 +61,30 @@ stages:
       save_steps: 1
       eval_steps: 1
       save_total_limit: 20
+  pilot_continuation:
+    token_budget: 500000
+    category_weights:
+      verified_code: 0.60
+      reasoning: 0.20
+      swe: 0.10
+      claude_code: 0.05
+      general_tools: 0.05
+    training:
+      # Reutiliza exatamente o conjunto aprovado no piloto; não refaz o mix.
+      data_stage: pilot
+      requires_adapter: true
+      verify_source_data: true
+      # Fornecido pelo notebook/CLI para não gravar um caminho pessoal no repo.
+      adapter_path: null
+      output_dir: outputs/checkpoints/pilot_continuation
+      adapter_output_dir: outputs/adapters/pilot_continuation
+      learning_rate: 0.00002
+      num_train_epochs: 1
+      max_seq_length: 4096
+      logging_steps: 1
+      save_steps: 1
+      eval_steps: 1
+      save_total_limit: 20
   baseline:
     token_budget: 15000000
     category_weights:

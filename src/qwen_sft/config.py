@@ -92,6 +92,12 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError(
                 f"Learning rate inválido em stages.{stage_name}: {learning_rate}"
             )
+        data_stage = stage["training"].get("data_stage")
+        if data_stage is not None and data_stage not in stages:
+            raise ValueError(
+                f"stages.{stage_name}.training.data_stage desconhecido: "
+                f"{data_stage}"
+            )
 
     categories = {
         category

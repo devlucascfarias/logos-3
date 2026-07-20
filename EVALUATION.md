@@ -93,3 +93,19 @@ Preencha `comparison.md`/`ratings.json` antes de abrir `mapping.json`. O piloto
 só substitui o campeão se ganhar em correção e cumprimento das instruções sem
 regredir repetição, truncamento ou overthinking. Se nenhum checkpoint passar
 esse gate, mantenha o campeão e revise os dados; não promova pelo `eval_loss`.
+
+## Gate da continuação
+
+Compare a continuação com o piloto preservado e o modelo-base:
+
+```bash
+python scripts/compare_adapter.py \
+  --stage pilot_continuation \
+  --reference-adapter-path /caminho/para/pilot_500k_step7/adapter \
+  --output-dir outputs/evaluations/pilot_continuation \
+  --seed 20260722
+```
+
+A continuação só substitui o piloto preservado depois da avaliação cega. Os
+rótulos A/B/C são embaralhados separadamente por prompt; agregue as notas por
+identidade somente após abrir `mapping.json`.
