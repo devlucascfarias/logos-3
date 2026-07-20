@@ -5,7 +5,7 @@ import json
 import os
 import random
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +48,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _encoded_token_count(encoded: Any) -> int:
+    if isinstance(encoded, Mapping):
+        if "input_ids" not in encoded:
+            raise ValueError("A tokenização não retornou input_ids.")
+        encoded = encoded["input_ids"]
+    return len(encoded)
+
+
 def _tokenizer_functions(model_name: str, revision: str):
     try:
         from transformers import AutoTokenizer
@@ -69,9 +77,7 @@ def _tokenizer_functions(model_name: str, revision: str):
             add_generation_prompt=False,
             enable_thinking=True,
         )
-        if isinstance(encoded, dict):
-            encoded = encoded["input_ids"]
-        return len(encoded)
+        return _encoded_token_count(encoded)
 
     def count_text(text: str) -> int:
         return len(tokenizer(text, add_special_tokens=False)["input_ids"])
@@ -327,10 +333,6 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     train_path = output_dir / "train.jsonl"
     validation_path = output_dir / "validation.jsonl"
-    write_jsonl(train_path, (training_row(example) for example in train))
-    write_jsonl(
-        validation_path, (training_row(example) for example in validation)
-    )
     report = {
         "stage": args.stage,
         "config": str(Path(args.config)),
@@ -349,9 +351,23 @@ def main() -> None:
             ),
         },
     }
-    (output_dir / "dataset_report.json").write_text(
+    report_path = output_dir / "dataset_report.json"
+    report_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
+    )
+    if not train:
+        for stale_path in (train_path, validation_path):
+            if stale_path.exists():
+                stale_path.unlink()
+        raise SystemExit(
+            "Nenhum exemplo de treino foi selecionado. Consulte "
+            f"{report_path} para ver as rejeições por fonte."
+        )
+
+    write_jsonl(train_path, (training_row(example) for example in train))
+    write_jsonl(
+        validation_path, (training_row(example) for example in validation)
     )
     print(f"\nTreino: {train_path} ({len(train):,} exemplos)")
     print(f"Validação: {validation_path} ({len(validation):,} exemplos)")

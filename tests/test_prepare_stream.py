@@ -2,6 +2,7 @@ import importlib.util
 import io
 import json
 import sys
+from collections import UserDict
 from pathlib import Path
 
 
@@ -12,6 +13,18 @@ SPEC = importlib.util.spec_from_file_location("prepare_data", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 prepare_data = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(prepare_data)
+
+
+def test_encoded_token_count_reads_batch_encoding_input_ids():
+    encoded = UserDict(
+        {
+            "input_ids": list(range(40)),
+            "attention_mask": [1] * 40,
+        }
+    )
+
+    assert prepare_data._encoded_token_count(encoded) == 40
+    assert prepare_data._encoded_token_count(list(range(12))) == 12
 
 
 def test_buffered_shuffle_is_deterministic():

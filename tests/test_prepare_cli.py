@@ -68,3 +68,37 @@ def test_prepare_cli_with_local_candidates(tmp_path):
     assert (output_dir / "validation.jsonl").exists()
     assert report["mix"]["budget_reached"]
     assert report["split"]["group_overlap"] is False
+
+
+def test_prepare_cli_rejects_empty_training_set(tmp_path):
+    candidate_path = tmp_path / "empty.jsonl"
+    candidate_path.write_text("", encoding="utf-8")
+    output_dir = tmp_path / "processed"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "prepare_data.py"),
+            "--config",
+            str(ROOT / "configs" / "recipe.yaml"),
+            "--stage",
+            "baseline",
+            "--token-budget",
+            "1000",
+            "--candidates-jsonl",
+            str(candidate_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "Nenhum exemplo de treino foi selecionado" in (
+        result.stdout + result.stderr
+    )
+    assert (output_dir / "dataset_report.json").exists()
+    assert not (output_dir / "train.jsonl").exists()
+    assert not (output_dir / "validation.jsonl").exists()

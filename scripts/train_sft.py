@@ -141,9 +141,10 @@ def main() -> None:
             "A etapa agentic deve continuar um adapter escolhido. Defina "
             "stages.agentic.training.adapter_path em configs/recipe.yaml."
         )
-    if not train_file.exists():
+    if not train_file.exists() or train_file.stat().st_size == 0:
         raise SystemExit(
-            f"Dados ausentes: {train_file}. Execute scripts/prepare_data.py primeiro."
+            f"Dados ausentes ou vazios: {train_file}. "
+            "Execute scripts/prepare_data.py primeiro."
         )
 
     try:
@@ -187,7 +188,11 @@ def main() -> None:
         tokenizer.pad_token = tokenizer.eos_token
 
     data_files = {"train": str(train_file)}
-    use_eval = validation_file.exists() and not args.no_eval
+    use_eval = (
+        validation_file.exists()
+        and validation_file.stat().st_size > 0
+        and not args.no_eval
+    )
     if use_eval:
         data_files["validation"] = str(validation_file)
     dataset = load_dataset("json", data_files=data_files)
