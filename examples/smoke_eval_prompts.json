@@ -1,0 +1,17 @@
+[
+  {
+    "id": "preserve_order",
+    "title": "Correção com preservação de ordem",
+    "prompt": "Corrija a função abaixo.\n\n```python\ndef unique_in_order(items):\n    return list(set(items))\n```\n\nRequisitos:\n- preservar a ordem da primeira ocorrência;\n- aceitar apenas valores hashable;\n- manter complexidade O(n) em média;\n- não usar imports;\n- incluir uma explicação breve e exatamente um bloco de código Python;\n- incluir asserts cobrindo lista vazia, duplicatas e strings."
+  },
+  {
+    "id": "parse_logs",
+    "title": "Parser com validação estrita",
+    "prompt": "Implemente `count_log_levels(lines: list[str]) -> dict[str, int]`.\n\nCada linha não vazia deve ter o formato `NIVEL|mensagem`. Os únicos níveis válidos são `INFO`, `WARNING` e `ERROR`. Linhas vazias devem ser ignoradas. Uma linha inválida deve gerar `ValueError` contendo o número da linha, começando em 1.\n\nRestrições:\n- não usar bibliotecas externas;\n- não alterar a lista recebida;\n- retornar todas as três chaves, inclusive quando a contagem for zero;\n- fornecer explicação breve, exatamente um bloco Python e asserts de validação."
+  },
+  {
+    "id": "retry_contract",
+    "title": "Contrato de retry",
+    "prompt": "Implemente `retry(operation, attempts, retry_on)` em Python.\n\nContrato:\n- `operation` é uma função sem argumentos;\n- `attempts` deve ser inteiro positivo, caso contrário levante `ValueError`;\n- capture somente exceções compatíveis com `retry_on`;\n- retorne imediatamente no primeiro sucesso;\n- na última falha, propague a própria exceção capturada;\n- não espere, não faça logging e não use imports;\n- inclua explicação breve, exatamente um bloco Python e asserts demonstrando sucesso após falhas e propagação final."
+  }
+]

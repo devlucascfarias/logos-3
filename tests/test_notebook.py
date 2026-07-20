@@ -23,3 +23,6 @@ def test_colab_notebook_is_valid_and_references_pipeline():
     assert "subprocess.Popen" in source
     assert "os.read(process.stdout.fileno(), 4096)" in source
     assert "Log salvo em:" in source
+    assert "compare_adapter.py" in source
+    assert "comparison.md" in source
+    assert "mapping.json" in source
