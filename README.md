@@ -1,27 +1,10 @@
 # SFT Qwen3-8B em NVIDIA L4
 
-Implementação reproduzível de
-[`receita_sft_qwen3_8b_l4.md`](receita_sft_qwen3_8b_l4.md) para Google Colab
-Pro. O pipeline usa QLoRA NF4 com TRL + PEFT, mistura o corpus por **tokens**,
-treina somente sobre mensagens do assistente e registra dados suficientes para
-comparar o modelo-base com cada checkpoint.
+O projeto implementa um pipeline completo de fine-tuning do **Qwen3-8B** usando **QLoRA em 4 bits**, pensado para rodar em uma GPU NVIDIA L4. O foco é treinar o modelo com dados de programação, raciocínio e comportamento agentic sem simplesmente misturar grandes volumes de texto: o pipeline controla a proporção dos dados por quantidade de tokens, remove duplicatas e exemplos problemáticos, separa dados de avaliação e treina apenas sobre as respostas do assistente.
 
-O fluxo entregue cobre:
+Além do treinamento, o projeto inclui um processo de seleção e correção dos modelos gerados. Cada checkpoint é avaliado em tarefas que o modelo não viu durante o treino, incluindo testes de código, debugging e regressão, e só é promovido quando realmente supera o modelo anterior sem piorar comportamentos já adquiridos. O pipeline também permite continuar o treinamento a partir do melhor adapter e aplicar rodadas corretivas com novos dados, mantendo rastreabilidade e verificações para garantir que cada etapa seja reproduzível.
 
-- download em streaming das seis fontes da receita;
-- normalização para `messages` no chat template oficial do Qwen3;
-- remoção de segredos, holdouts, loops, duplicatas exatas/aproximadas,
-  repetições degeneradas e exemplos com blocos incompletos;
-- segmentação por turnos de traces que excedem 4096 tokens;
-- limite de dois segmentos por conversa/repositório para reduzir concentração;
-- mistura `60/20/10/5/5` no baseline e `45/20/20/10/5` no SFT principal;
-- distribuição de raciocínio controlada, com respostas diretas predominantes
-  e limite explícito para raciocínios longos;
-- QLoRA rank 32 sobre atenção e MLP, batch efetivo 16;
-- retomada automática e continuação agentic a partir de um adapter escolhido;
-- rodada corretiva fail-closed com corpus assinado, executor restrito e gates
-  funcionais por checkpoint;
-- seleção do checkpoint pela fórmula da receita.
+mais detalhes em https://github.com/devlucascfarias/logos-3
 
 ## Caminho mais curto: Colab
 
