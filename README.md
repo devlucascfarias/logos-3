@@ -4,8 +4,6 @@ O projeto implementa um pipeline completo de fine-tuning do **Qwen3-8B** usando 
 
 Além do treinamento, o projeto inclui um processo de seleção e correção dos modelos gerados. Cada checkpoint é avaliado em tarefas que o modelo não viu durante o treino, incluindo testes de código, debugging e regressão, e só é promovido quando realmente supera o modelo anterior sem piorar comportamentos já adquiridos. O pipeline também permite continuar o treinamento a partir do melhor adapter e aplicar rodadas corretivas com novos dados, mantendo rastreabilidade e verificações para garantir que cada etapa seja reproduzível.
 
-mais detalhes em https://github.com/devlucascfarias/logos-3
-
 ## Caminho mais curto: Colab
 
 Abra e execute
